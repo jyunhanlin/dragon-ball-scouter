@@ -1265,26 +1265,34 @@ function showError(msg: string): void {
   errorBox.hidden = false;
 }
 
+let booting = false;
+
 async function boot(): Promise<void> {
+  if (booting) return; // 連點 flip/retry 時的重入會孤兒化已開啟的 stream
+  booting = true;
   errorBox.hidden = true;
   try {
-    cam?.stop();
-    cam = await startCamera(video, facing);
-    facing = cam.facing;
-    video.classList.toggle('mirrored', facing === 'user');
-  } catch {
-    showError('相機權限被拒或無法開啟鏡頭，請允許相機權限後重試');
-    return;
-  }
-  if (!detector) {
     try {
-      detector = await createDetector();
+      cam?.stop();
+      cam = await startCamera(video, facing);
+      facing = cam.facing;
+      video.classList.toggle('mirrored', facing === 'user');
     } catch {
-      showError('模型載入失敗（需要網路），請重試');
+      showError('相機權限被拒或無法開啟鏡頭，請允許相機權限後重試');
       return;
     }
+    if (!detector) {
+      try {
+        detector = await createDetector();
+      } catch {
+        showError('模型載入失敗（需要網路），請重試');
+        return;
+      }
+    }
+    state = start(state, performance.now());
+  } finally {
+    booting = false;
   }
-  state = start(state, performance.now());
 }
 
 startBtn.addEventListener('click', () => {
