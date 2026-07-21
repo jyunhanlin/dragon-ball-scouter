@@ -1,23 +1,36 @@
 import './style.css';
 import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector } from './detector';
+import {
+  computeRatios, basePower, effortFromBlend, boostMultiplier,
+  smooth, median,
+} from './power';
+import { initial, start, tick, type FsmState } from './fsm';
 import { Hud, coverTransform, toScreen, type Box } from './hud';
+import { initAudio, playLock, playTick, playOverload } from './sfx';
 
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
+const canvas = document.querySelector<HTMLCanvasElement>('#hud')!;
 const startOverlay = document.querySelector<HTMLDivElement>('#start-overlay')!;
 const startBtn = document.querySelector<HTMLButtonElement>('#start-btn')!;
 const errorBox = document.querySelector<HTMLDivElement>('#error-box')!;
 const errorMsg = document.querySelector<HTMLParagraphElement>('#error-msg')!;
 const retryBtn = document.querySelector<HTMLButtonElement>('#retry-btn')!;
 const flipBtn = document.querySelector<HTMLButtonElement>('#flip-btn')!;
-const canvas = document.querySelector<HTMLCanvasElement>('#hud')!;
+const restartBtn = document.querySelector<HTMLButtonElement>('#restart-btn')!;
+
 const hud = new Hud(canvas);
 hud.resize();
 window.addEventListener('resize', () => hud.resize());
 
 let cam: CameraHandle | null = null;
-let facing: 'user' | 'environment' = 'environment';
 let detector: Detector | null = null;
+let state: FsmState = initial();
+let facing: 'user' | 'environment' = 'environment';
+let samples: number[] = [];   // scanning 期間收集的瞬時基礎值
+let frozenBase = 0;           // scanning 結束時凍結的基礎值
+let display = 0;              // 平滑後的顯示數值
+let lastTickSfx = 0;
 
 function showError(msg: string): void {
   errorMsg.textContent = msg;
@@ -43,10 +56,11 @@ async function boot(): Promise<void> {
       return;
     }
   }
-  requestAnimationFrame(debugLoop); // TEMP
+  state = start(state, performance.now());
 }
 
 startBtn.addEventListener('click', () => {
+  initAudio();
   startOverlay.hidden = true;
   void boot();
 });
@@ -55,19 +69,70 @@ flipBtn.addEventListener('click', () => {
   facing = facing === 'user' ? 'environment' : 'user';
   void boot();
 });
+restartBtn.addEventListener('click', () => {
+  restartBtn.hidden = true;
+  display = 0;
+  hud.clearOverload();
+  state = start(state, performance.now());
+});
 
-// TEMP: Task 8 換成完整狀態機迴圈
-function debugLoop(): void {
-  requestAnimationFrame(debugLoop);
-  if (!detector || video.readyState < 2) return;
-  const frame = detector.detect(video, performance.now());
+function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
+  if (prev === 'searching' && next === 'locked') playLock();
+  if (next === 'scanning') samples = [];
+  if (prev === 'scanning' && next === 'result') {
+    frozenBase = median(samples);
+    display = frozenBase;
+  }
+  if (next === 'overload') {
+    playOverload();
+    hud.triggerOverload();
+    restartBtn.hidden = false;
+  }
+  if (next === 'searching') {
+    display = 0;
+    hud.clearOverload();
+  }
+}
+
+function loop(): void {
+  requestAnimationFrame(loop);
+  const now = performance.now();
+  const frame = detector && video.readyState >= 2 ? detector.detect(video, now) : null;
+
+  const prevPhase = state.phase;
+  state = tick(state, { now, faceVisible: frame !== null, displayValue: display });
+  if (prevPhase !== state.phase) onTransition(prevPhase, state.phase);
+
+  if (frame) {
+    if (state.phase === 'scanning') {
+      samples.push(basePower(computeRatios(frame.points)));
+      if (now - lastTickSfx > 150) {
+        playTick();
+        lastTickSfx = now;
+      }
+    }
+    if (state.phase === 'result') {
+      const target = frozenBase * boostMultiplier(effortFromBlend(frame.blend));
+      display = smooth(display, target);
+    }
+  }
+
   let box: Box | null = null;
   if (frame) {
     const t = coverTransform(video.videoWidth, video.videoHeight, canvas.clientWidth, canvas.clientHeight);
     const mirrored = facing === 'user';
     const a = toScreen({ x: frame.box.x, y: frame.box.y }, t, mirrored, canvas.clientWidth);
-    const b = toScreen({ x: frame.box.x + frame.box.w, y: frame.box.y + frame.box.h }, t, mirrored, canvas.clientWidth);
+    const b = toScreen(
+      { x: frame.box.x + frame.box.w, y: frame.box.y + frame.box.h },
+      t, mirrored, canvas.clientWidth,
+    );
     box = { x: Math.min(a.x, b.x), y: a.y, w: Math.abs(b.x - a.x), h: b.y - a.y };
   }
-  hud.draw({ phase: frame ? 'locked' : 'searching', box, value: null });
+  hud.draw({
+    phase: state.phase,
+    box,
+    value: state.phase === 'result' || state.phase === 'overload' ? Math.round(display) : null,
+  });
 }
+
+loop();
