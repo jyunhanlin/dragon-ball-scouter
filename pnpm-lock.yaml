@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@mediapipe/tasks-vision':
-        specifier: ^0.10.14
+        specifier: 0.10.35
         version: 0.10.35
     devDependencies:
       '@vitejs/plugin-basic-ssl':

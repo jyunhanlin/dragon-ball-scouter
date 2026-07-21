@@ -8,6 +8,7 @@ export function initAudio(): void {
 
 function beep(freq: number, delay: number, dur: number, type: OscillatorType = 'square', vol = 0.04): void {
   if (!ac) return;
+  if (ac.state === 'suspended') void ac.resume();
   const t = ac.currentTime + delay;
   const osc = ac.createOscillator();
   const g = ac.createGain();
@@ -31,6 +32,7 @@ export function playTick(): void {
 
 export function playOverload(): void {
   if (!ac) return;
+  if (ac.state === 'suspended') void ac.resume();
   beep(1200, 0, 0.4, 'sawtooth', 0.06);
   beep(600, 0.1, 0.5, 'sawtooth', 0.06);
   const len = Math.floor(ac.sampleRate * 0.4);

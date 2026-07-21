@@ -79,6 +79,7 @@ flipBtn.addEventListener('click', () => {
 });
 restartBtn.addEventListener('click', () => {
   restartBtn.hidden = true;
+  // 手動 start() 不經過 onTransition：這裡必須鏡照 onTransition 的 searching 分支
   display = 0;
   hud.clearOverload();
   state = start(state, performance.now());

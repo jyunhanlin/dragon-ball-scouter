@@ -6,6 +6,8 @@
 - 加成：MediaPipe blendshapes（jawOpen / browDown / eyeWide）→ 最高 ×10
 - 全部在裝置端運算，影像不上傳
 
+Live: https://jyunhanlin.github.io/dragon-ball-scouter/
+
 ## Dev
 
 ```bash
