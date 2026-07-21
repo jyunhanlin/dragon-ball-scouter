@@ -650,7 +650,12 @@ export async function startCamera(
     audio: false,
   });
   video.srcObject = stream;
-  await video.play();
+  try {
+    await video.play();
+  } catch (err) {
+    stream.getTracks().forEach((t) => t.stop()); // play 失敗時不能讓 stream 漏掉
+    throw err;
+  }
   const settings = stream.getVideoTracks()[0].getSettings();
   const actual = (settings.facingMode as 'user' | 'environment' | undefined) ?? 'user';
   return {
