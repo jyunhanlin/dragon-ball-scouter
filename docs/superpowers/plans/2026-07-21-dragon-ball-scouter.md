@@ -499,7 +499,11 @@ describe('fsm', () => {
 
   it('臉短暫消失 < LOST_MS 不掉回 searching', () => {
     const s = at('locked', 100, 100);
-    expect(tick(s, noFace(100 + LOST_MS - 1)).phase).toBe('locked');
+    // 未達 LOCK_MS：留在 locked
+    expect(tick(s, noFace(100 + LOCK_MS - 1)).phase).toBe('locked');
+    // 已過 LOCK_MS（仍 < LOST_MS）：照常前進到 scanning，不會掉回 searching
+    // （debounce 的意圖是「不重置」，不是「凍結流程推進」）
+    expect(tick(s, noFace(100 + LOST_MS - 1)).phase).toBe('scanning');
   });
 
   it('臉消失 ≥ LOST_MS → searching（locked / scanning / result 皆然）', () => {
