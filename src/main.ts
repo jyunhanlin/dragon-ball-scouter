@@ -1,6 +1,7 @@
 import './style.css';
 import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector } from './detector';
+import { Hud, coverTransform, toScreen, type Box } from './hud';
 
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
 const startOverlay = document.querySelector<HTMLDivElement>('#start-overlay')!;
@@ -9,6 +10,10 @@ const errorBox = document.querySelector<HTMLDivElement>('#error-box')!;
 const errorMsg = document.querySelector<HTMLParagraphElement>('#error-msg')!;
 const retryBtn = document.querySelector<HTMLButtonElement>('#retry-btn')!;
 const flipBtn = document.querySelector<HTMLButtonElement>('#flip-btn')!;
+const canvas = document.querySelector<HTMLCanvasElement>('#hud')!;
+const hud = new Hud(canvas);
+hud.resize();
+window.addEventListener('resize', () => hud.resize());
 
 let cam: CameraHandle | null = null;
 let facing: 'user' | 'environment' = 'environment';
@@ -51,12 +56,18 @@ flipBtn.addEventListener('click', () => {
   void boot();
 });
 
-// TEMP: Task 9 移除，改為正式 rAF 迴圈
+// TEMP: Task 8 換成完整狀態機迴圈
 function debugLoop(): void {
   requestAnimationFrame(debugLoop);
   if (!detector || video.readyState < 2) return;
   const frame = detector.detect(video, performance.now());
+  let box: Box | null = null;
   if (frame) {
-    console.log('jawOpen:', frame.blend.jawOpen?.toFixed(2), 'box:', Math.round(frame.box.w));
+    const t = coverTransform(video.videoWidth, video.videoHeight, canvas.clientWidth, canvas.clientHeight);
+    const mirrored = facing === 'user';
+    const a = toScreen({ x: frame.box.x, y: frame.box.y }, t, mirrored, canvas.clientWidth);
+    const b = toScreen({ x: frame.box.x + frame.box.w, y: frame.box.y + frame.box.h }, t, mirrored, canvas.clientWidth);
+    box = { x: Math.min(a.x, b.x), y: a.y, w: Math.abs(b.x - a.x), h: b.y - a.y };
   }
+  hud.draw({ phase: frame ? 'locked' : 'searching', box, value: null });
 }
