@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>戰鬥力探測器</title>
+  </head>
+  <body>
+    <div id="app">
+      <video id="cam" autoplay playsinline muted></video>
+      <canvas id="hud"></canvas>
+      <div id="start-overlay">
+        <h1>戰鬥力探測器</h1>
+        <p>SCOUTER v0.1</p>
+        <button id="start-btn">啟動</button>
+      </div>
+      <div id="error-box" hidden>
+        <p id="error-msg"></p>
+        <button id="retry-btn">重試</button>
+      </div>
+      <button id="flip-btn" title="切換鏡頭">⟲</button>
+      <button id="restart-btn" hidden>重新啟動</button>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
