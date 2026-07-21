@@ -1454,6 +1454,152 @@ git commit -m "docs: readme + cleanup"
 
 ---
 
+### Task 10: pnpm 遷移 + 套件升級到最新（使用者於執行中追加）
+
+**Files:**
+- Modify: `package.json`
+- Delete: `package-lock.json`
+- Create: `pnpm-lock.yaml`（pnpm install 產生）
+
+**Interfaces:**
+- Consumes: 現有 scripts（dev/build/test 名稱不變）
+- Produces: 之後所有任務的驗證指令改用 `pnpm test` / `pnpm build`；CI 用 `pnpm install --frozen-lockfile`
+
+- [ ] **Step 1: 移除 npm lockfile、鎖定 pnpm**
+
+```bash
+rm package-lock.json
+```
+
+`package.json` 加欄位（scripts 不動）：
+
+```json
+"packageManager": "pnpm@11.12.0"
+```
+
+- [ ] **Step 2: devDependencies 升到最新（2026-07-21 registry 查證）**
+
+```json
+"devDependencies": {
+  "@vitejs/plugin-basic-ssl": "^2.3.0",
+  "typescript": "^7.0.2",
+  "vite": "^8.1.5",
+  "vitest": "^4.1.10"
+}
+```
+
+（`@mediapipe/tasks-vision` ^0.10.35 已是最新，不動）
+
+- [ ] **Step 3: 安裝 + 全驗證**
+
+Run: `pnpm install`，然後 `pnpm test && pnpm build`
+Expected: 30/30 綠、build 無錯誤
+
+若 major 升級造成破壞：先嘗試官方遷移文件的顯而易見修法（設定改名等）；仍不行則該套件退回原 major，並在報告中記錄原因與證據。
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A
+git commit -m "chore: migrate to pnpm and bump deps to latest"
+```
+
+---
+
+### Task 11: GitHub Actions 部署到 GitHub Pages（使用者於執行中追加）
+
+**Files:**
+- Modify: `vite.config.ts`（加 `base: './'`，Pages 子路徑下資源才找得到）
+- Create: `.github/workflows/deploy.yml`
+
+**Interfaces:**
+- Consumes: Task 10 的 pnpm lockfile 與 scripts
+- Produces: push to main 即自動部署的公開頁面
+
+- [ ] **Step 1: vite.config.ts 加 base**
+
+```ts
+export default defineConfig({
+  base: './',
+  plugins: [basicSsl()],
+  server: { host: true },
+  test: { environment: 'node' },
+});
+```
+
+- [ ] **Step 2: .github/workflows/deploy.yml**（action 版本為 2026-07-21 經 GitHub API 查證的最新 major）
+
+```yaml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+```
+
+- [ ] **Step 3: 建 repo、推上去、開 Pages（workflow 模式）**
+
+```bash
+gh repo create dragon-ball-scouter --public --source=. --remote=origin --push
+gh api -X POST repos/jyunhanlin/dragon-ball-scouter/pages -f build_type=workflow
+```
+
+（repo 已存在的話改用 `git remote add origin` + `git push -u origin main`；Pages 已啟用則把 build_type PUT 成 workflow）
+
+- [ ] **Step 4: 驗證部署真的成功**
+
+Run: `gh run watch`（或輪詢 `gh run list --limit 1`）直到 workflow 結束
+Expected: conclusion=success
+
+Run: `curl -sI https://jyunhanlin.github.io/dragon-ball-scouter/ | head -1`
+Expected: `HTTP/2 200`
+
+- [ ] **Step 5: Commit**（workflow/vite.config 若尚未 commit，在 push 前完成）
+
+```bash
+git add vite.config.ts .github
+git commit -m "ci: deploy to github pages"
+```
+
+---
+
 ## Self-Review 紀錄
 
 - Spec 覆蓋：模組表（T1-T7）、數值計算含凍結基礎值（T2/T8）、狀態機含 debounce（T3）、鏡頭切換與鏡像（T4/T8）、最大臉鎖定（T5）、cover 映射（T6）、爆表彩蛋（T6/T8）、音效合成（T7）、錯誤處理兩類（T4/T5/T8）、HTTPS 限制（T1/T9）、測試策略（純函式 TDD + 手動清單）— 無缺口
