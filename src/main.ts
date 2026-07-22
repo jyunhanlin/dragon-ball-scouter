@@ -1,13 +1,13 @@
 import './style.css';
 import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector, type DetectorStage } from './detector';
-import { createHairSegmenter, type HairLayer } from './segmenter';
+import type { Hair3D } from './hair3d';
 import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
   smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT, OVER_LIMIT,
 } from './power';
 import { initial, start, tick, type FsmState } from './fsm';
-import { Hud, coverTransform, toScreen, type Box, type HairFrame } from './hud';
+import { Hud, coverTransform, toScreen, type Box } from './hud';
 import { initAudio, playLock, playTick, playOverload, playChargeTick, playTransform } from './sfx';
 
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
@@ -32,13 +32,6 @@ const debugEl = urlParams.has('debug')
   ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'debug' }))
   : null;
 
-// ?spike：three.js 特效層可行性驗證（動態載入，一般訪客 bundle 不含 three）
-let spike3d: import('./spike3d').Spike3D | null = null;
-if (urlParams.has('spike')) {
-  void import('./spike3d').then((m) => {
-    spike3d = m.createSpike3D(canvas);
-  });
-}
 
 let cam: CameraHandle | null = null;
 let detector: Detector | null = null;
@@ -52,13 +45,10 @@ let charge = 0;               // 超賽蓄力毫秒數（result 中累積）
 let ssjStartValue = 0;        // 變身瞬間的顯示值（爬升起點）
 let lastChargeSfx = 0;
 let prevNow = performance.now();
-let hairMs = 0;               // debug 用：最近一次頭髮分割耗時
 let fpsCount = 0;             // debug 用：rAF 迴圈實際 fps
 let fpsAt = performance.now();
 let fps = 0;
 let ssjAt = 0;                // 變身時間戳（0=未變身）；overload 期間沿用，回搜尋才歸零
-let lastHairAt = 0;           // 分割節流（實測單次 ~29ms，全幀率跑會吃光幀預算）
-let lastHair: HairFrame | null = null;
 
 function showError(msg: string): void {
   errorMsg.textContent = msg;
@@ -75,7 +65,7 @@ function pause(ms: number): Promise<void> {
 
 let detectorPromise: Promise<Detector>;
 let preloadFailed = false;
-let hairLayer: HairLayer | null = null; // 金髮分割（非致命：載不到就 SKIP，變身時只少染髮）
+let hair3d: Hair3D | null = null; // 3D 刺蝟頭層（非致命：載不到就 SKIP，變身時只少頭髮）
 
 type StepResult = 'ok' | 'skip' | 'fail';
 
@@ -91,16 +81,20 @@ function initPreload(): void {
     Promise.race([p.then(() => 'ok' as const), detectorPromise.then(() => 'ok' as const, () => 'fail' as const)]);
 
   let hairWait: Promise<StepResult> = Promise.resolve('ok');
-  if (!hairLayer) {
-    const hp = createHairSegmenter();
-    hp.then((h) => { hairLayer = h; }).catch(() => {});
-    hairWait = hp.then(() => 'ok' as const, () => 'skip' as const);
+  if (!hair3d) {
+    // three.js chunk 動態載入（主 bundle 不含 three），WebGL 不可用時 SKIP
+    hairWait = import('./hair3d')
+      .then((m) => {
+        hair3d = m.createHair3D(canvas);
+        return 'ok' as const;
+      })
+      .catch(() => 'skip' as const);
   }
 
   void runBootLog([
     ['> COMBAT MODULE .........', orFail(stages.wasm)],
     ['> TARGET DATABASE .......', orFail(stages.model)],
-    ['> HAIR DYE MODULE .......', hairWait],
+    ['> SAIYAN HAIR ...........', hairWait],
     ['> CALIBRATING SENSOR ....', orFail(stages.warmup)],
   ]);
 }
@@ -201,7 +195,6 @@ restartBtn.addEventListener('click', () => {
   display = 0;
   charge = 0;
   ssjAt = 0;
-  lastHair = null;
   hud.clearOverload();
   state = start(state, performance.now());
 });
@@ -230,7 +223,6 @@ function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
     display = 0;
     charge = 0;
     ssjAt = 0;
-    lastHair = null;
     hud.clearOverload();
   }
 }
@@ -277,21 +269,17 @@ function loop(): void {
     display = ssjClimb(ssjStartValue, now - state.phaseAt);
   }
 
-  // 金髮分割只在變身期間（ssj + 後續 overload）跑，且節流 20Hz — 平時零推論負擔
-  let hair: HairFrame | null = null;
+  // 3D 刺蝟頭只在變身期間渲染（模組內部處理 display/skip，平時零成本）
   const transformed = ssjAt > 0;
-  if (transformed && hairLayer && video.readyState >= 2) {
-    if (now - lastHairAt >= 50) {
-      lastHairAt = now;
-      const t0 = performance.now();
-      const img = hairLayer.render(video, now);
-      hairMs = performance.now() - t0;
-      lastHair = img
-        ? { img, videoW: video.videoWidth, videoH: video.videoHeight, mirrored: facing === 'user' }
-        : null;
-    }
-    hair = lastHair;
-  }
+  hair3d?.render(
+    transformed ? frame : null,
+    transformed ? now - ssjAt : 0,
+    video.videoWidth,
+    video.videoHeight,
+    facing === 'user',
+    canvas.clientWidth,
+    canvas.clientHeight,
+  );
 
   if (debugEl) {
     const jaw = frame?.blend.jawOpen ?? 0;
@@ -303,8 +291,7 @@ function loop(): void {
       `effort  ${eff.toFixed(2)} (need ≥ ${SSJ_EFFORT.toFixed(2)})\n` +
       `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
       `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}\n` +
-      `hair    ${hairLayer ? 'ready' : 'off'}  last ${hairMs.toFixed(1)}ms\n` +
-      `fps     ${fps.toFixed(0)}${spike3d ? '  (spike3d on)' : ''}`;
+      `fps     ${fps.toFixed(0)}  hair3d ${hair3d ? 'ready' : 'off'}`;
   }
 
   let box: Box | null = null;
@@ -318,8 +305,6 @@ function loop(): void {
     );
     box = { x: Math.min(a.x, b.x), y: a.y, w: Math.abs(b.x - a.x), h: b.y - a.y };
   }
-  spike3d?.render(frame, video.videoWidth, video.videoHeight, facing === 'user', canvas.clientWidth, canvas.clientHeight);
-
   fpsCount++;
   if (now - fpsAt >= 1000) {
     fps = (fpsCount * 1000) / (now - fpsAt);
@@ -333,7 +318,6 @@ function loop(): void {
     box,
     value: showValue ? Math.round(display) : null,
     charge: state.phase === 'ssj' ? 1 : state.phase === 'result' ? charge / SSJ_CHARGE_MS : 0,
-    hair,
     ssjMs: transformed ? now - ssjAt : 0,
   });
 }
