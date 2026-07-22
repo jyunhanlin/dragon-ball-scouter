@@ -22,7 +22,7 @@ button {
 button:active { background: rgba(125, 255, 158, 0.2); }
 button:disabled { opacity: 0.35; cursor: default; }
 #boot-log {
-  min-height: 7.5em; /* 5 行 × 1.5 行高：逐行出現時按鈕不跳動 */
+  min-height: 9em; /* 6 行 × 1.5 行高：逐行出現時按鈕不跳動 */
   text-align: left;
   font-size: 14px;
   line-height: 1.5;

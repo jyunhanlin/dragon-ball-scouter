@@ -1,12 +1,13 @@
 import './style.css';
 import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector, type DetectorStage } from './detector';
+import { createHairSegmenter, type HairLayer } from './segmenter';
 import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
   smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT, OVER_LIMIT,
 } from './power';
 import { initial, start, tick, type FsmState } from './fsm';
-import { Hud, coverTransform, toScreen, type Box } from './hud';
+import { Hud, coverTransform, toScreen, type Box, type HairFrame } from './hud';
 import { initAudio, playLock, playTick, playOverload, playChargeTick, playTransform } from './sfx';
 
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
@@ -41,6 +42,7 @@ let charge = 0;               // 超賽蓄力毫秒數（result 中累積）
 let ssjStartValue = 0;        // 變身瞬間的顯示值（爬升起點）
 let lastChargeSfx = 0;
 let prevNow = performance.now();
+let hairMs = 0;               // debug 用：最近一次頭髮分割耗時
 
 function showError(msg: string): void {
   errorMsg.textContent = msg;
@@ -57,6 +59,9 @@ function pause(ms: number): Promise<void> {
 
 let detectorPromise: Promise<Detector>;
 let preloadFailed = false;
+let hairLayer: HairLayer | null = null; // 金髮分割（非致命：載不到就 SKIP，變身時只少染髮）
+
+type StepResult = 'ok' | 'skip' | 'fail';
 
 function initPreload(): void {
   preloadFailed = false;
@@ -65,7 +70,23 @@ function initPreload(): void {
   const stages = { wasm: stageDone('wasm'), model: stageDone('model'), warmup: stageDone('warmup') };
   detectorPromise = createDetector((s) => resolvers[s]());
   detectorPromise.catch(() => { preloadFailed = true; });
-  void runBootLog(stages, detectorPromise);
+  // detector 階段：完成→ok；detectorPromise 整體失敗→fail
+  const orFail = (p: Promise<void>): Promise<StepResult> =>
+    Promise.race([p.then(() => 'ok' as const), detectorPromise.then(() => 'ok' as const, () => 'fail' as const)]);
+
+  let hairWait: Promise<StepResult> = Promise.resolve('ok');
+  if (!hairLayer) {
+    const hp = createHairSegmenter();
+    hp.then((h) => { hairLayer = h; }).catch(() => {});
+    hairWait = hp.then(() => 'ok' as const, () => 'skip' as const);
+  }
+
+  void runBootLog([
+    ['> COMBAT MODULE .........', orFail(stages.wasm)],
+    ['> TARGET DATABASE .......', orFail(stages.model)],
+    ['> HAIR DYE MODULE .......', hairWait],
+    ['> CALIBRATING SENSOR ....', orFail(stages.warmup)],
+  ]);
 }
 
 interface PendingLine { label: Text; cursor: HTMLSpanElement }
@@ -88,32 +109,22 @@ function finishLine(line: PendingLine, suffix: string): void {
   line.label.textContent += suffix + '\n';
 }
 
-async function runBootLog(
-  stages: Record<DetectorStage, Promise<void>>,
-  dp: Promise<Detector>,
-): Promise<void> {
+async function runBootLog(steps: [string, Promise<StepResult>][]): Promise<void> {
   bootLog.textContent = '';
-  const failed = dp.then(() => false, () => true);
-
   addLine('SCOUTER OS v0.1');
   await pause(200);
   addLine('> POWER CELL ............ OK');
   await pause(200);
 
-  const steps: [DetectorStage, string][] = [
-    ['wasm', '> COMBAT MODULE .........'],
-    ['model', '> TARGET DATABASE .......'],
-    ['warmup', '> CALIBRATING SENSOR ....'],
-  ];
-  for (const [stage, label] of steps) {
+  for (const [label, wait] of steps) {
     const line = addPendingLine(label);
-    const bad = await Promise.race([stages[stage].then(() => false), failed]);
-    if (bad) {
+    const r = await wait;
+    if (r === 'fail') {
       finishLine(line, ' FAIL');
       showError('模型載入失敗（需要網路），請重試');
       return;
     }
-    finishLine(line, ' OK');
+    finishLine(line, r === 'ok' ? ' OK' : ' SKIP');
     await pause(120);
   }
   startBtn.disabled = false;
@@ -245,6 +256,17 @@ function loop(): void {
     display = ssjClimb(ssjStartValue, now - state.phaseAt);
   }
 
+  // 金髮分割只在 ssj 的 2.5 秒窗口跑，平時零推論負擔
+  let hair: HairFrame | null = null;
+  if (state.phase === 'ssj' && hairLayer && video.readyState >= 2) {
+    const t0 = performance.now();
+    const img = hairLayer.render(video, now);
+    hairMs = performance.now() - t0;
+    if (img) {
+      hair = { img, videoW: video.videoWidth, videoH: video.videoHeight, mirrored: facing === 'user' };
+    }
+  }
+
   if (debugEl) {
     const jaw = frame?.blend.jawOpen ?? 0;
     const brow = ((frame?.blend.browDownLeft ?? 0) + (frame?.blend.browDownRight ?? 0)) / 2;
@@ -254,7 +276,8 @@ function loop(): void {
       `phase   ${state.phase}\n` +
       `effort  ${eff.toFixed(2)} (need ≥ ${SSJ_EFFORT.toFixed(2)})\n` +
       `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
-      `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}`;
+      `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}\n` +
+      `hair    ${hairLayer ? 'ready' : 'off'}  last ${hairMs.toFixed(1)}ms`;
   }
 
   let box: Box | null = null;
@@ -274,6 +297,8 @@ function loop(): void {
     box,
     value: showValue ? Math.round(display) : null,
     charge: state.phase === 'ssj' ? 1 : state.phase === 'result' ? charge / SSJ_CHARGE_MS : 0,
+    hair,
+    ssjMs: state.phase === 'ssj' ? now - state.phaseAt : 0,
   });
 }
 

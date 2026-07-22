@@ -35,6 +35,14 @@ interface Particle { x: number; y: number; vx: number; vy: number; life: number;
 
 const MAX_PARTICLES = 80;
 
+export interface HairFrame {
+  /** video 像素空間的金髮圖層（segmenter 產出） */
+  img: CanvasImageSource;
+  videoW: number;
+  videoH: number;
+  mirrored: boolean;
+}
+
 export interface HudFrame {
   phase: Phase;
   /** 螢幕座標的臉框；無臉時 null */
@@ -43,6 +51,10 @@ export interface HudFrame {
   value: number | null;
   /** 超賽蓄力進度 0..1（result 中漸變；ssj 起固定 1） */
   charge: number;
+  /** ssj 金髮圖層；無則 null */
+  hair: HairFrame | null;
+  /** 進入 ssj 起算的毫秒數（刺蝟頭 grow-in 用）；非 ssj 為 0 */
+  ssjMs: number;
 }
 
 export class Hud {
@@ -103,8 +115,10 @@ export class Hud {
     ctx.shadowColor = theme;
     ctx.shadowBlur = 12;
 
+    if (f.hair) this.drawHair(f.hair, W, H);
     if (f.phase === 'searching') this.drawSearchReticle(W, H);
     if (f.box) {
+      if (ssj) this.drawSpikes(f.box, Math.min(1, f.ssjMs / 350));
       this.drawBrackets(f.box);
       if (f.phase === 'scanning') {
         this.drawScanline(f.box);
@@ -119,6 +133,49 @@ export class Hud {
     }
     this.drawParticles(dt);
     if (f.phase === 'overload') this.drawOverload(W, H);
+  }
+
+  /** 金髮圖層：video 像素空間 → cover 映射鋪到螢幕（鏡像用整層翻轉，等價於 toScreen 的 x 翻轉） */
+  private drawHair(h: HairFrame, W: number, H: number): void {
+    const { ctx } = this;
+    const t = coverTransform(h.videoW, h.videoH, W, H);
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.85;
+    if (h.mirrored) {
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(h.img, t.dx, t.dy, h.videoW * t.scale, h.videoH * t.scale);
+    ctx.restore();
+  }
+
+  /** 超賽刺蝟頭剪影：固定比例尖刺（幀間穩定），grow 0..1 做變身瞬間的長出動畫 */
+  private drawSpikes(b: Box, grow: number): void {
+    const { ctx } = this;
+    const heights = [0.55, 0.8, 1, 0.7, 0.9, 0.6];
+    const n = heights.length;
+    const baseY = b.y + b.h * 0.15; // 髮際線附近
+    const eased = 1 - (1 - grow) * (1 - grow);
+    const maxH = b.h * 0.55 * eased;
+    if (maxH <= 0) return;
+    ctx.save();
+    ctx.fillStyle = GOLD;
+    ctx.shadowColor = GOLD;
+    ctx.shadowBlur = 18;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(b.x, baseY);
+    for (let i = 0; i < n; i++) {
+      const x0 = b.x + (b.w * i) / n;
+      const x1 = b.x + (b.w * (i + 1)) / n;
+      ctx.lineTo((x0 + x1) / 2, baseY - maxH * heights[i]);
+      ctx.lineTo(x1, baseY - maxH * 0.15);
+    }
+    ctx.lineTo(b.x + b.w, baseY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   /** 頭部區域灑金色粒子；intensity 0..1 控制每幀生成量 */

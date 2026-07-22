@@ -1,7 +1,8 @@
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import type { FaceFrame, Pt } from './types';
 
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
+// 單一定義供 detector/segmenter 共用 — 版本必須與 package.json 的 @mediapipe/tasks-vision 完全一致
+export const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
 const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 
