@@ -35,3 +35,8 @@ button:disabled { opacity: 0.35; cursor: default; }
 #flip-btn { position: fixed; right: 16px; bottom: 16px; z-index: 5; }
 #restart-btn { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5; }
 [hidden] { display: none !important; }
+#debug {
+  position: fixed; top: 8px; left: 8px; z-index: 20;
+  font-size: 12px; line-height: 1.6; white-space: pre;
+  background: rgba(0, 10, 4, 0.7); padding: 6px 10px; border-radius: 4px;
+}

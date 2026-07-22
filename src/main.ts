@@ -24,6 +24,11 @@ const hud = new Hud(canvas);
 hud.resize();
 window.addEventListener('resize', () => hud.resize());
 
+// ?debug 顯示即時 effort/charge 數值（調參與除錯用）
+const debugEl = new URLSearchParams(location.search).has('debug')
+  ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'debug' }))
+  : null;
+
 let cam: CameraHandle | null = null;
 let detector: Detector | null = null;
 let state: FsmState = initial();
@@ -235,6 +240,18 @@ function loop(): void {
   if (state.phase === 'ssj') {
     // 確定性爬升（臉短暫消失也不中斷）；穿越 9000 時 fsm 交給既有 overload
     display = ssjClimb(ssjStartValue, now - state.phaseAt);
+  }
+
+  if (debugEl) {
+    const jaw = frame?.blend.jawOpen ?? 0;
+    const brow = ((frame?.blend.browDownLeft ?? 0) + (frame?.blend.browDownRight ?? 0)) / 2;
+    const eye = ((frame?.blend.eyeWideLeft ?? 0) + (frame?.blend.eyeWideRight ?? 0)) / 2;
+    const eff = frame ? effortFromBlend(frame.blend) : 0;
+    debugEl.textContent =
+      `phase   ${state.phase}\n` +
+      `effort  ${eff.toFixed(2)} (need ≥ 0.80)\n` +
+      `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
+      `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}`;
   }
 
   let box: Box | null = null;
