@@ -32,8 +32,16 @@ button:disabled { opacity: 0.35; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   #boot-log .cursor { animation: none; }
 }
-#flip-btn { position: fixed; right: 16px; bottom: 16px; z-index: 5; }
-#restart-btn { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5; }
+#flip-btn {
+  position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 5;
+  width: 56px; height: 56px; padding: 0; /* ≥44pt 觸控目標（Apple HIG） */
+  font-size: 30px; line-height: 1;
+  border-radius: 50%;
+}
+#restart-btn {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%); z-index: 5;
+}
 [hidden] { display: none !important; }
 #debug {
   position: fixed; top: 8px; left: 8px; z-index: 20;
