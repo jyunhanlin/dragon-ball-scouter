@@ -3,7 +3,7 @@ import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector, type DetectorStage } from './detector';
 import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
-  smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS,
+  smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT,
 } from './power';
 import { initial, start, tick, type FsmState } from './fsm';
 import { Hud, coverTransform, toScreen, type Box } from './hud';
@@ -249,7 +249,7 @@ function loop(): void {
     const eff = frame ? effortFromBlend(frame.blend) : 0;
     debugEl.textContent =
       `phase   ${state.phase}\n` +
-      `effort  ${eff.toFixed(2)} (need ≥ 0.80)\n` +
+      `effort  ${eff.toFixed(2)} (need ≥ ${SSJ_EFFORT.toFixed(2)})\n` +
       `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
       `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}`;
   }

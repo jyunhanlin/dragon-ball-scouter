@@ -70,7 +70,9 @@ export function isOverload(displayValue: number): boolean {
 }
 
 // 超級賽亞人模式（可調常數）
-export const SSJ_EFFORT = 0.8;     // 蓄力所需發力度
+// 實測校準（2026-07-22）：真實 blendshape 全力吼約 0.45 — jaw 滿分只貢獻 0.6，
+// 且嘴全張時 brow/eye 拮抗出不了力，0.8 物理性到不了
+export const SSJ_EFFORT = 0.35;    // 蓄力所需發力度
 export const SSJ_CHARGE_MS = 1500; // 蓄滿所需毫秒
 export const SSJ_DECAY = 2;        // 放鬆時蓄力流失倍速
 export const SSJ_CLIMB_MS = 2500;  // 變身後爬升時長（欣賞窗口的旋鈕）
