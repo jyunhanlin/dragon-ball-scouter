@@ -22,6 +22,7 @@ export async function createDetector(onStage?: (stage: DetectorStage) => void): 
     runningMode: 'VIDEO',
     numFaces: 3,
     outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true, // 3D 特效層的頭部姿態（spike 起用）
   });
   onStage?.('model');
 
@@ -51,10 +52,12 @@ export async function createDetector(onStage?: (stage: DetectorStage) => void): 
         }
         const blend: Record<string, number> = {};
         for (const c of res.faceBlendshapes[i]?.categories ?? []) blend[c.categoryName] = c.score;
+        const pose = res.facialTransformationMatrixes?.[i]?.data;
         const frame: FaceFrame = {
           points,
           blend,
           box: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+          pose: pose ? Array.from(pose) : undefined,
         };
         // 鎖定畫面中最大（最近）的臉
         if (!best || frame.box.w * frame.box.h > best.box.w * best.box.h) best = frame;

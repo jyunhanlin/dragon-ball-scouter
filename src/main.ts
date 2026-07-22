@@ -25,10 +25,20 @@ const hud = new Hud(canvas);
 hud.resize();
 window.addEventListener('resize', () => hud.resize());
 
+const urlParams = new URLSearchParams(location.search);
+
 // ?debug 顯示即時 effort/charge 數值（調參與除錯用）
-const debugEl = new URLSearchParams(location.search).has('debug')
+const debugEl = urlParams.has('debug')
   ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'debug' }))
   : null;
+
+// ?spike：three.js 特效層可行性驗證（動態載入，一般訪客 bundle 不含 three）
+let spike3d: import('./spike3d').Spike3D | null = null;
+if (urlParams.has('spike')) {
+  void import('./spike3d').then((m) => {
+    spike3d = m.createSpike3D(canvas);
+  });
+}
 
 let cam: CameraHandle | null = null;
 let detector: Detector | null = null;
@@ -43,6 +53,9 @@ let ssjStartValue = 0;        // 變身瞬間的顯示值（爬升起點）
 let lastChargeSfx = 0;
 let prevNow = performance.now();
 let hairMs = 0;               // debug 用：最近一次頭髮分割耗時
+let fpsCount = 0;             // debug 用：rAF 迴圈實際 fps
+let fpsAt = performance.now();
+let fps = 0;
 let ssjAt = 0;                // 變身時間戳（0=未變身）；overload 期間沿用，回搜尋才歸零
 let lastHairAt = 0;           // 分割節流（實測單次 ~29ms，全幀率跑會吃光幀預算）
 let lastHair: HairFrame | null = null;
@@ -290,7 +303,8 @@ function loop(): void {
       `effort  ${eff.toFixed(2)} (need ≥ ${SSJ_EFFORT.toFixed(2)})\n` +
       `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
       `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}\n` +
-      `hair    ${hairLayer ? 'ready' : 'off'}  last ${hairMs.toFixed(1)}ms`;
+      `hair    ${hairLayer ? 'ready' : 'off'}  last ${hairMs.toFixed(1)}ms\n` +
+      `fps     ${fps.toFixed(0)}${spike3d ? '  (spike3d on)' : ''}`;
   }
 
   let box: Box | null = null;
@@ -304,6 +318,15 @@ function loop(): void {
     );
     box = { x: Math.min(a.x, b.x), y: a.y, w: Math.abs(b.x - a.x), h: b.y - a.y };
   }
+  spike3d?.render(frame, video.videoWidth, video.videoHeight, facing === 'user', canvas.clientWidth, canvas.clientHeight);
+
+  fpsCount++;
+  if (now - fpsAt >= 1000) {
+    fps = (fpsCount * 1000) / (now - fpsAt);
+    fpsCount = 0;
+    fpsAt = now;
+  }
+
   const showValue = state.phase === 'result' || state.phase === 'ssj' || state.phase === 'overload';
   hud.draw({
     phase: state.phase,
