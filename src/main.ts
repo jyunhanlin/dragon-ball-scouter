@@ -43,6 +43,9 @@ let ssjStartValue = 0;        // 變身瞬間的顯示值（爬升起點）
 let lastChargeSfx = 0;
 let prevNow = performance.now();
 let hairMs = 0;               // debug 用：最近一次頭髮分割耗時
+let ssjAt = 0;                // 變身時間戳（0=未變身）；overload 期間沿用，回搜尋才歸零
+let lastHairAt = 0;           // 分割節流（實測單次 ~29ms，全幀率跑會吃光幀預算）
+let lastHair: HairFrame | null = null;
 
 function showError(msg: string): void {
   errorMsg.textContent = msg;
@@ -184,6 +187,8 @@ restartBtn.addEventListener('click', () => {
   // 手動 start() 不經過 onTransition：這裡必須鏡照 onTransition 的 searching 分支
   display = 0;
   charge = 0;
+  ssjAt = 0;
+  lastHair = null;
   hud.clearOverload();
   state = start(state, performance.now());
 });
@@ -201,6 +206,7 @@ function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
   if (prev === 'result' && next === 'ssj') {
     playTransform();
     ssjStartValue = display; // 爬升起點：變身瞬間的讀數
+    ssjAt = performance.now();
   }
   if (next === 'overload') {
     playOverload();
@@ -210,6 +216,8 @@ function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
   if (next === 'searching') {
     display = 0;
     charge = 0;
+    ssjAt = 0;
+    lastHair = null;
     hud.clearOverload();
   }
 }
@@ -256,15 +264,20 @@ function loop(): void {
     display = ssjClimb(ssjStartValue, now - state.phaseAt);
   }
 
-  // 金髮分割只在 ssj 的 2.5 秒窗口跑，平時零推論負擔
+  // 金髮分割只在變身期間（ssj + 後續 overload）跑，且節流 20Hz — 平時零推論負擔
   let hair: HairFrame | null = null;
-  if (state.phase === 'ssj' && hairLayer && video.readyState >= 2) {
-    const t0 = performance.now();
-    const img = hairLayer.render(video, now);
-    hairMs = performance.now() - t0;
-    if (img) {
-      hair = { img, videoW: video.videoWidth, videoH: video.videoHeight, mirrored: facing === 'user' };
+  const transformed = ssjAt > 0;
+  if (transformed && hairLayer && video.readyState >= 2) {
+    if (now - lastHairAt >= 50) {
+      lastHairAt = now;
+      const t0 = performance.now();
+      const img = hairLayer.render(video, now);
+      hairMs = performance.now() - t0;
+      lastHair = img
+        ? { img, videoW: video.videoWidth, videoH: video.videoHeight, mirrored: facing === 'user' }
+        : null;
     }
+    hair = lastHair;
   }
 
   if (debugEl) {
@@ -298,7 +311,7 @@ function loop(): void {
     value: showValue ? Math.round(display) : null,
     charge: state.phase === 'ssj' ? 1 : state.phase === 'result' ? charge / SSJ_CHARGE_MS : 0,
     hair,
-    ssjMs: state.phase === 'ssj' ? now - state.phaseAt : 0,
+    ssjMs: transformed ? now - ssjAt : 0,
   });
 }
 

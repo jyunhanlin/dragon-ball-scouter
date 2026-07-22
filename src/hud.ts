@@ -51,9 +51,9 @@ export interface HudFrame {
   value: number | null;
   /** 超賽蓄力進度 0..1（result 中漸變；ssj 起固定 1） */
   charge: number;
-  /** ssj 金髮圖層；無則 null */
+  /** 金髮圖層；無則 null */
   hair: HairFrame | null;
-  /** 進入 ssj 起算的毫秒數（刺蝟頭 grow-in 用）；非 ssj 為 0 */
+  /** 變身起算的毫秒數（含爆表期間 — 爆的是探測器，人還是超賽）；未變身為 0 */
   ssjMs: number;
 }
 
@@ -103,12 +103,12 @@ export class Hud {
     const dt = Math.min(50, now - this.lastDrawAt) / 1000; // 秒；分頁暫停後夾住避免粒子瞬移
     this.lastDrawAt = now;
 
-    const ssj = f.phase === 'ssj';
-    const theme = ssj ? GOLD : mixColor(GREEN, GOLD, f.charge);
+    const transformed = f.ssjMs > 0; // 變身視覺持續到 overload：爆的是探測器，人還是超賽
+    const theme = transformed ? GOLD : mixColor(GREEN, GOLD, f.charge);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = ssj ? 'rgba(255, 200, 60, 0.06)' : 'rgba(0, 255, 120, 0.05)'; // 鏡片色調
+    ctx.fillStyle = transformed ? 'rgba(255, 200, 60, 0.06)' : 'rgba(0, 255, 120, 0.05)'; // 鏡片色調
     ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = theme;
     ctx.fillStyle = theme;
@@ -118,17 +118,19 @@ export class Hud {
     if (f.hair) this.drawHair(f.hair, W, H);
     if (f.phase === 'searching') this.drawSearchReticle(W, H);
     if (f.box) {
-      if (ssj) this.drawSpikes(f.box, Math.min(1, f.ssjMs / 350));
+      let spikeTop: number | null = null;
+      if (transformed) spikeTop = this.drawSpikes(f.box, Math.min(1, f.ssjMs / 350));
       this.drawBrackets(f.box);
       if (f.phase === 'scanning') {
         this.drawScanline(f.box);
         this.drawValue(f.box, String(1 + Math.floor(Math.random() * 99999))); // 亂數滾動
       }
       if ((f.phase === 'result' || f.phase === 'ssj' || f.phase === 'overload') && f.value !== null) {
-        this.drawValue(f.box, String(f.value));
+        // 變身時數字讓位給刺蝟頭，移到刺尖上方
+        this.drawValue(f.box, String(f.value), spikeTop !== null ? spikeTop - 14 : undefined);
       }
       // 蓄力靜電微粒（稀疏）→ 變身火焰 aura（全開）
-      if (ssj) this.spawnAura(f.box, 1);
+      if (transformed) this.spawnAura(f.box, 1);
       else if (f.charge > 0) this.spawnAura(f.box, f.charge * 0.35);
     }
     this.drawParticles(dt);
@@ -150,32 +152,49 @@ export class Hud {
     ctx.restore();
   }
 
-  /** 超賽刺蝟頭剪影：固定比例尖刺（幀間穩定），grow 0..1 做變身瞬間的長出動畫 */
-  private drawSpikes(b: Box, grow: number): void {
+  /**
+   * 超賽刺蝟頭剪影。landmarks 只涵蓋臉（box.y ≈ 額頂），所以基線錨在 box 頂端、
+   * 尖刺往上竄過真髮區；寬度內縮避開耳朵。回傳刺尖的螢幕 y（數字讓位用）。
+   */
+  private drawSpikes(b: Box, grow: number): number {
     const { ctx } = this;
-    const heights = [0.55, 0.8, 1, 0.7, 0.9, 0.6];
-    const n = heights.length;
-    const baseY = b.y + b.h * 0.15; // 髮際線附近
+    // 不對稱鋸齒 + 交錯外傾，避免讀成皇冠；幀間穩定（無亂數）
+    const spikes = [
+      { h: 0.45, lean: -0.6 }, { h: 0.75, lean: -0.35 }, { h: 0.6, lean: -0.15 },
+      { h: 1.0, lean: 0 }, { h: 0.7, lean: 0.1 }, { h: 0.9, lean: 0.3 },
+      { h: 0.55, lean: 0.45 }, { h: 0.8, lean: 0.65 },
+    ];
+    const n = spikes.length;
+    const left = b.x + b.w * 0.12; // 內縮：髮際比含耳 box 窄
+    const width = b.w * 0.76;
+    const baseY = b.y + b.h * 0.04;
     const eased = 1 - (1 - grow) * (1 - grow);
-    const maxH = b.h * 0.55 * eased;
-    if (maxH <= 0) return;
+    const maxH = b.h * 0.6 * eased;
+    if (maxH <= 0) return baseY;
+    const topY = baseY - maxH;
     ctx.save();
-    ctx.fillStyle = GOLD;
+    const grad = ctx.createLinearGradient(0, topY, 0, baseY);
+    grad.addColorStop(0, '#fff3b0'); // 刺尖偏白金
+    grad.addColorStop(1, GOLD);
+    ctx.fillStyle = grad;
     ctx.shadowColor = GOLD;
     ctx.shadowBlur = 18;
-    ctx.globalAlpha = 0.9;
+    ctx.globalAlpha = 0.85;
     ctx.beginPath();
-    ctx.moveTo(b.x, baseY);
+    ctx.moveTo(left, baseY);
     for (let i = 0; i < n; i++) {
-      const x0 = b.x + (b.w * i) / n;
-      const x1 = b.x + (b.w * (i + 1)) / n;
-      ctx.lineTo((x0 + x1) / 2, baseY - maxH * heights[i]);
-      ctx.lineTo(x1, baseY - maxH * 0.15);
+      const x0 = left + (width * i) / n;
+      const x1 = left + (width * (i + 1)) / n;
+      const s = spikes[i];
+      const tipX = (x0 + x1) / 2 + s.lean * (x1 - x0); // 外傾的尖
+      ctx.lineTo(tipX, baseY - maxH * s.h);
+      ctx.lineTo(x1, baseY - maxH * 0.08); // 刺谷貼近基線，減少「王冠環帶」感
     }
-    ctx.lineTo(b.x + b.w, baseY);
+    ctx.lineTo(left + width, baseY);
     ctx.closePath();
     ctx.fill();
     ctx.restore();
+    return topY;
   }
 
   /** 頭部區域灑金色粒子；intensity 0..1 控制每幀生成量 */
@@ -260,10 +279,10 @@ export class Hud {
     ctx.stroke();
   }
 
-  private drawValue(b: Box, text: string): void {
+  private drawValue(b: Box, text: string, yOverride?: number): void {
     const { ctx } = this;
     ctx.font = 'bold 40px ui-monospace, monospace';
-    ctx.fillText(text, b.x, Math.max(48, b.y - 16));
+    ctx.fillText(text, b.x, Math.max(48, yOverride ?? b.y - 16));
   }
 
   private drawOverload(W: number, H: number): void {
