@@ -42,6 +42,8 @@ camera.ts (getUserMedia stream)
 
 ## Gotchas
 
+- **Effort's reachable range is ~0–0.5, not 0–1.** `effortFromBlend` weights sum to 1 on paper, but real MediaPipe blendshapes cap far lower (measured full-yell ≈ 0.45: jaw contributes ≤0.6 and brow/eye are antagonistic to an open jaw). Any threshold on effort must be calibrated against the `?debug` overlay (append `?debug` to the URL for live effort/charge/blendshape readouts) — never against paper math. SSJ_EFFORT=0.35 came from this measurement.
+
 - `getUserMedia` requires a secure context: dev uses the basic-ssl self-signed cert (click through the browser warning); phone testing uses the Network URL over the same Wi-Fi.
 - `packageManager` pnpm version matters in CI: 11.12.0 crashed `pnpm/action-setup`'s self-update (fixed at 11.14+). Don't downgrade it.
 - `pnpm test` (vitest) does not type-check; `pnpm build`'s `tsc` step does, and it includes test files. Run build before claiming type safety.
