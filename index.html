@@ -18,7 +18,15 @@
         <p id="error-msg"></p>
         <button id="retry-btn">重試</button>
       </div>
-      <button id="flip-btn" title="切換鏡頭">⟲</button>
+      <button id="flip-btn" title="切換鏡頭" aria-label="切換鏡頭">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 12a8 8 0 0 1 13.66-5.66" />
+          <polyline points="18.5 2.5 18.5 7 14 7" />
+          <path d="M20 12a8 8 0 0 1-13.66 5.66" />
+          <polyline points="5.5 21.5 5.5 17 10 17" />
+        </svg>
+      </button>
       <button id="restart-btn" hidden>重新啟動</button>
     </div>
     <script type="module" src="/src/main.ts"></script>
