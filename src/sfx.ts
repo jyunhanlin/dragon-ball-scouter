@@ -30,6 +30,31 @@ export function playTick(): void {
   beep(880, 0, 0.03, 'square', 0.02);
 }
 
+/** 蓄力提示音：pitch 隨蓄力進度 0..1 上升 */
+export function playChargeTick(progress: number): void {
+  beep(300 + progress * 900, 0, 0.05, 'square', 0.03);
+}
+
+/** 變身轟鳴：雙鋸齒波 1.2s 低頻掃升 */
+export function playTransform(): void {
+  if (!ac) return;
+  if (ac.state === 'suspended') void ac.resume();
+  const t = ac.currentTime;
+  for (const [f0, f1] of [[80, 700], [120, 1050]] as const) {
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(f1, t + 1.2);
+    g.gain.setValueAtTime(0.02, t);
+    g.gain.linearRampToValueAtTime(0.08, t + 1.0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    osc.connect(g).connect(ac.destination);
+    osc.start(t);
+    osc.stop(t + 1.4);
+  }
+}
+
 export function playOverload(): void {
   if (!ac) return;
   if (ac.state === 'suspended') void ac.resume();

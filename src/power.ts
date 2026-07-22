@@ -68,3 +68,22 @@ export function median(xs: number[]): number {
 export function isOverload(displayValue: number): boolean {
   return displayValue > OVER_LIMIT;
 }
+
+// 超級賽亞人模式（可調常數）
+export const SSJ_EFFORT = 0.8;     // 蓄力所需發力度
+export const SSJ_CHARGE_MS = 1500; // 蓄滿所需毫秒
+export const SSJ_DECAY = 2;        // 放鬆時蓄力流失倍速
+export const SSJ_CLIMB_MS = 2500;  // 變身後爬升時長（欣賞窗口的旋鈕）
+export const SSJ_PEAK = 12000;     // 爬升終點（> 9000 保證觸發爆表）
+
+/** 蓄力累積：發力時 +dt，放鬆時以 SSJ_DECAY 倍速衰減，夾在 [0, SSJ_CHARGE_MS] */
+export function chargeStep(charge: number, effort: number, dtMs: number): number {
+  const next = effort >= SSJ_EFFORT ? charge + dtMs : charge - dtMs * SSJ_DECAY;
+  return Math.min(SSJ_CHARGE_MS, Math.max(0, next));
+}
+
+/** 變身後的確定性爬升：ease-in（t²）從起始值到 SSJ_PEAK，途中必穿越 9000 */
+export function ssjClimb(startValue: number, elapsedMs: number): number {
+  const t = Math.min(1, elapsedMs / SSJ_CLIMB_MS);
+  return Math.round(startValue + (SSJ_PEAK - startValue) * t * t);
+}

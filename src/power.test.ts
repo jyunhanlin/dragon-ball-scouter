@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
-  smooth, median, isOverload, BASE_MIN, BASE_MAX, MAX_BOOST,
+  smooth, median, isOverload, chargeStep, ssjClimb,
+  BASE_MIN, BASE_MAX, MAX_BOOST,
+  SSJ_EFFORT, SSJ_CHARGE_MS, SSJ_DECAY, SSJ_CLIMB_MS, SSJ_PEAK,
 } from './power';
 import type { Pt } from './types';
 
@@ -98,5 +100,33 @@ describe('isOverload', () => {
   it('9000 不算爆表，9001 算', () => {
     expect(isOverload(9000)).toBe(false);
     expect(isOverload(9001)).toBe(true);
+  });
+});
+
+describe('chargeStep（超賽蓄力）', () => {
+  it('發力 ≥ SSJ_EFFORT 時累積 dt', () => {
+    expect(chargeStep(0, SSJ_EFFORT, 100)).toBe(100);
+  });
+  it('放鬆時以 SSJ_DECAY 倍速衰減', () => {
+    expect(chargeStep(1000, 0, 100)).toBe(1000 - 100 * SSJ_DECAY);
+  });
+  it('下限 0、上限 SSJ_CHARGE_MS', () => {
+    expect(chargeStep(50, 0, 100)).toBe(0);
+    expect(chargeStep(SSJ_CHARGE_MS - 10, 1, 100)).toBe(SSJ_CHARGE_MS);
+  });
+});
+
+describe('ssjClimb（變身爬升曲線）', () => {
+  it('t=0 從起始值開始', () => {
+    expect(ssjClimb(1500, 0)).toBe(1500);
+  });
+  it('單調遞增', () => {
+    expect(ssjClimb(1500, 1000)).toBeLessThan(ssjClimb(1500, 2000));
+  });
+  it('SSJ_CLIMB_MS 內必定突破 9000（低起始值也一樣）', () => {
+    expect(ssjClimb(100, SSJ_CLIMB_MS)).toBeGreaterThan(9000);
+  });
+  it('封頂 SSJ_PEAK', () => {
+    expect(ssjClimb(1500, SSJ_CLIMB_MS * 5)).toBe(SSJ_PEAK);
   });
 });

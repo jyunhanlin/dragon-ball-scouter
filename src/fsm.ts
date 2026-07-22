@@ -5,7 +5,7 @@ export const LOCK_MS = 600;
 export const SCAN_MS = 1200;
 export const LOST_MS = 1000;
 
-export type Phase = 'idle' | 'searching' | 'locked' | 'scanning' | 'result' | 'overload';
+export type Phase = 'idle' | 'searching' | 'locked' | 'scanning' | 'result' | 'ssj' | 'overload';
 
 export interface FsmState {
   phase: Phase;
@@ -19,6 +19,8 @@ export interface FrameInput {
   now: number;
   faceVisible: boolean;
   displayValue: number;
+  /** 超賽蓄力已滿（僅 result phase 有意義） */
+  charged: boolean;
 }
 
 export function initial(): FsmState {
@@ -33,7 +35,7 @@ export function start(s: FsmState, now: number): FsmState {
 }
 
 export function tick(s: FsmState, input: FrameInput): FsmState {
-  const { now, faceVisible, displayValue } = input;
+  const { now, faceVisible, displayValue, charged } = input;
   const lastFaceAt = faceVisible ? now : s.lastFaceAt;
   const lost = !faceVisible && now - lastFaceAt >= LOST_MS;
 
@@ -52,6 +54,11 @@ export function tick(s: FsmState, input: FrameInput): FsmState {
       if (now - s.phaseAt >= SCAN_MS) return { phase: 'result', phaseAt: now, lastFaceAt };
       return { ...s, lastFaceAt };
     case 'result':
+      if (lost) return { phase: 'searching', phaseAt: now, lastFaceAt };
+      if (isOverload(displayValue)) return { phase: 'overload', phaseAt: now, lastFaceAt };
+      if (charged) return { phase: 'ssj', phaseAt: now, lastFaceAt };
+      return { ...s, lastFaceAt };
+    case 'ssj':
       if (lost) return { phase: 'searching', phaseAt: now, lastFaceAt };
       if (isOverload(displayValue)) return { phase: 'overload', phaseAt: now, lastFaceAt };
       return { ...s, lastFaceAt };

@@ -3,11 +3,11 @@ import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector, type DetectorStage } from './detector';
 import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
-  smooth, median,
+  smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS,
 } from './power';
 import { initial, start, tick, type FsmState } from './fsm';
 import { Hud, coverTransform, toScreen, type Box } from './hud';
-import { initAudio, playLock, playTick, playOverload } from './sfx';
+import { initAudio, playLock, playTick, playOverload, playChargeTick, playTransform } from './sfx';
 
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
 const canvas = document.querySelector<HTMLCanvasElement>('#hud')!;
@@ -32,6 +32,10 @@ let samples: number[] = [];   // scanning 期間收集的瞬時基礎值
 let frozenBase = 0;           // scanning 結束時凍結的基礎值
 let display = 0;              // 平滑後的顯示數值
 let lastTickSfx = 0;
+let charge = 0;               // 超賽蓄力毫秒數（result 中累積）
+let ssjStartValue = 0;        // 變身瞬間的顯示值（爬升起點）
+let lastChargeSfx = 0;
+let prevNow = performance.now();
 
 function showError(msg: string): void {
   errorMsg.textContent = msg;
@@ -163,16 +167,24 @@ restartBtn.addEventListener('click', () => {
   restartBtn.hidden = true;
   // 手動 start() 不經過 onTransition：這裡必須鏡照 onTransition 的 searching 分支
   display = 0;
+  charge = 0;
   hud.clearOverload();
   state = start(state, performance.now());
 });
 
 function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
   if (prev === 'searching' && next === 'locked') playLock();
-  if (next === 'scanning') samples = [];
+  if (next === 'scanning') {
+    samples = [];
+    charge = 0;
+  }
   if (prev === 'scanning' && next === 'result') {
     frozenBase = median(samples);
     display = frozenBase;
+  }
+  if (prev === 'result' && next === 'ssj') {
+    playTransform();
+    ssjStartValue = display; // 爬升起點：變身瞬間的讀數
   }
   if (next === 'overload') {
     playOverload();
@@ -181,6 +193,7 @@ function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
   }
   if (next === 'searching') {
     display = 0;
+    charge = 0;
     hud.clearOverload();
   }
 }
@@ -188,10 +201,17 @@ function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
 function loop(): void {
   requestAnimationFrame(loop);
   const now = performance.now();
+  const dt = now - prevNow;
+  prevNow = now;
   const frame = detector && video.readyState >= 2 ? detector.detect(video, now) : null;
 
   const prevPhase = state.phase;
-  state = tick(state, { now, faceVisible: frame !== null, displayValue: display });
+  state = tick(state, {
+    now,
+    faceVisible: frame !== null,
+    displayValue: display,
+    charged: charge >= SSJ_CHARGE_MS,
+  });
   if (prevPhase !== state.phase) onTransition(prevPhase, state.phase);
 
   if (frame) {
@@ -203,9 +223,18 @@ function loop(): void {
       }
     }
     if (state.phase === 'result') {
-      const target = frozenBase * boostMultiplier(effortFromBlend(frame.blend));
-      display = smooth(display, target);
+      const effort = effortFromBlend(frame.blend);
+      display = smooth(display, frozenBase * boostMultiplier(effort));
+      charge = chargeStep(charge, effort, dt);
+      if (charge > 0 && now - lastChargeSfx > 150) {
+        playChargeTick(charge / SSJ_CHARGE_MS);
+        lastChargeSfx = now;
+      }
     }
+  }
+  if (state.phase === 'ssj') {
+    // 確定性爬升（臉短暫消失也不中斷）；穿越 9000 時 fsm 交給既有 overload
+    display = ssjClimb(ssjStartValue, now - state.phaseAt);
   }
 
   let box: Box | null = null;
@@ -219,10 +248,12 @@ function loop(): void {
     );
     box = { x: Math.min(a.x, b.x), y: a.y, w: Math.abs(b.x - a.x), h: b.y - a.y };
   }
+  const showValue = state.phase === 'result' || state.phase === 'ssj' || state.phase === 'overload';
   hud.draw({
     phase: state.phase,
     box,
-    value: state.phase === 'result' || state.phase === 'overload' ? Math.round(display) : null,
+    value: showValue ? Math.round(display) : null,
+    charge: state.phase === 'ssj' ? 1 : state.phase === 'result' ? charge / SSJ_CHARGE_MS : 0,
   });
 }
 

@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { initial, start, tick, LOCK_MS, SCAN_MS, LOST_MS, type FsmState } from './fsm';
 
-const face = (now: number, displayValue = 0) => ({ now, faceVisible: true, displayValue });
-const noFace = (now: number, displayValue = 0) => ({ now, faceVisible: false, displayValue });
+const face = (now: number, displayValue = 0) => ({ now, faceVisible: true, displayValue, charged: false });
+const noFace = (now: number, displayValue = 0) => ({ now, faceVisible: false, displayValue, charged: false });
+const chargedFace = (now: number, displayValue = 0) => ({ now, faceVisible: true, displayValue, charged: true });
 
 /** 直接構造某個 phase 的狀態，避免每個測試都從頭走流程 */
 const at = (phase: FsmState['phase'], phaseAt: number, lastFaceAt: number): FsmState =>
@@ -62,5 +63,30 @@ describe('fsm', () => {
 
   it('faceVisible 會更新 lastFaceAt', () => {
     expect(tick(at('locked', 100, 100), face(250)).lastFaceAt).toBe(250);
+  });
+});
+
+describe('ssj（超級賽亞人變身）', () => {
+  it('result + 蓄滿 → ssj', () => {
+    expect(tick(at('result', 100, 100), chargedFace(200)).phase).toBe('ssj');
+  });
+
+  it('charged 在 result 以外的 phase 沒作用', () => {
+    for (const phase of ['searching', 'locked', 'scanning'] as const) {
+      expect(tick(at(phase, 100, 100), chargedFace(150)).phase).not.toBe('ssj');
+    }
+  });
+
+  it('result 同幀蓄滿且 >9000：overload 優先', () => {
+    expect(tick(at('result', 100, 100), chargedFace(200, 9001)).phase).toBe('overload');
+  });
+
+  it('ssj: 顯示值 > 9000 → overload；9000 不觸發', () => {
+    expect(tick(at('ssj', 100, 100), face(200, 9000)).phase).toBe('ssj');
+    expect(tick(at('ssj', 100, 100), face(200, 9001)).phase).toBe('overload');
+  });
+
+  it('ssj 臉消失 ≥ LOST_MS → searching', () => {
+    expect(tick(at('ssj', 100, 100), noFace(100 + LOST_MS)).phase).toBe('searching');
   });
 });

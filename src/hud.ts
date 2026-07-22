@@ -18,18 +18,38 @@ export function toScreen(p: Pt, t: CoverTransform, mirrored: boolean, screenW: n
 }
 
 const GREEN = '#57ff9a';
+const GOLD = '#ffd75e';
+
+/** 兩個 #rrggbb 之間線性插值（蓄力時臉框綠→金漸變用） */
+function mixColor(a: string, b: string, t: number): string {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const ch = (sh: number) => {
+    const va = (pa >> sh) & 255;
+    return Math.round(va + (((pb >> sh) & 255) - va) * t);
+  };
+  return `rgb(${ch(16)}, ${ch(8)}, ${ch(0)})`;
+}
+
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; ttl: number; r: number }
+
+const MAX_PARTICLES = 80;
 
 export interface HudFrame {
   phase: Phase;
   /** 螢幕座標的臉框；無臉時 null */
   box: Box | null;
-  /** result/overload 顯示的數值；其他 phase null */
+  /** result/ssj/overload 顯示的數值；其他 phase null */
   value: number | null;
+  /** 超賽蓄力進度 0..1（result 中漸變；ssj 起固定 1） */
+  charge: number;
 }
 
 export class Hud {
   private ctx: CanvasRenderingContext2D;
   private cracks: Pt[][] = [];
+  private particles: Particle[] = [];
+  private lastDrawAt = performance.now();
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -67,13 +87,20 @@ export class Hud {
     const dpr = window.devicePixelRatio || 1;
     const W = this.canvas.clientWidth;
     const H = this.canvas.clientHeight;
+    const now = performance.now();
+    const dt = Math.min(50, now - this.lastDrawAt) / 1000; // 秒；分頁暫停後夾住避免粒子瞬移
+    this.lastDrawAt = now;
+
+    const ssj = f.phase === 'ssj';
+    const theme = ssj ? GOLD : mixColor(GREEN, GOLD, f.charge);
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(0, 255, 120, 0.05)'; // 綠色鏡片色調
+    ctx.fillStyle = ssj ? 'rgba(255, 200, 60, 0.06)' : 'rgba(0, 255, 120, 0.05)'; // 鏡片色調
     ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = GREEN;
-    ctx.fillStyle = GREEN;
-    ctx.shadowColor = GREEN;
+    ctx.strokeStyle = theme;
+    ctx.fillStyle = theme;
+    ctx.shadowColor = theme;
     ctx.shadowBlur = 12;
 
     if (f.phase === 'searching') this.drawSearchReticle(W, H);
@@ -83,11 +110,53 @@ export class Hud {
         this.drawScanline(f.box);
         this.drawValue(f.box, String(1 + Math.floor(Math.random() * 99999))); // 亂數滾動
       }
-      if ((f.phase === 'result' || f.phase === 'overload') && f.value !== null) {
+      if ((f.phase === 'result' || f.phase === 'ssj' || f.phase === 'overload') && f.value !== null) {
         this.drawValue(f.box, String(f.value));
       }
+      // 蓄力靜電微粒（稀疏）→ 變身火焰 aura（全開）
+      if (ssj) this.spawnAura(f.box, 1);
+      else if (f.charge > 0) this.spawnAura(f.box, f.charge * 0.35);
     }
+    this.drawParticles(dt);
     if (f.phase === 'overload') this.drawOverload(W, H);
+  }
+
+  /** 頭部區域灑金色粒子；intensity 0..1 控制每幀生成量 */
+  private spawnAura(b: Box, intensity: number): void {
+    const count = Math.round(6 * intensity);
+    for (let i = 0; i < count && this.particles.length < MAX_PARTICLES; i++) {
+      this.particles.push({
+        x: b.x + Math.random() * b.w,
+        y: b.y + b.h * (0.05 + Math.random() * 0.5), // 頭部上半
+        vx: (Math.random() - 0.5) * 40,
+        vy: -(80 + Math.random() * 160), // 向上竄
+        life: 0,
+        ttl: 0.5 + Math.random() * 0.5,
+        r: 2 + Math.random() * 3,
+      });
+    }
+  }
+
+  private drawParticles(dt: number): void {
+    const { ctx } = this;
+    if (this.particles.length === 0) return;
+    ctx.save();
+    ctx.shadowColor = GOLD;
+    ctx.shadowBlur = 8;
+    this.particles = this.particles.filter((p) => {
+      p.life += dt;
+      if (p.life >= p.ttl) return false;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      const fade = 1 - p.life / p.ttl;
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = GOLD;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * fade, 0, Math.PI * 2);
+      ctx.fill();
+      return true;
+    });
+    ctx.restore();
   }
 
   private drawSearchReticle(W: number, H: number): void {
