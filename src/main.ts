@@ -3,7 +3,7 @@ import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector, type DetectorStage } from './detector';
 import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
-  smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT,
+  smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT, OVER_LIMIT,
 } from './power';
 import { initial, start, tick, type FsmState } from './fsm';
 import { Hud, coverTransform, toScreen, type Box } from './hud';
@@ -215,6 +215,7 @@ function loop(): void {
     now,
     faceVisible: frame !== null,
     displayValue: display,
+    charging: charge > 0,
     charged: charge >= SSJ_CHARGE_MS,
   });
   if (prevPhase !== state.phase) onTransition(prevPhase, state.phase);
@@ -231,6 +232,8 @@ function loop(): void {
       const effort = effortFromBlend(frame.blend);
       display = smooth(display, frozenBase * boostMultiplier(effort));
       charge = chargeStep(charge, effort, dt);
+      // 蓄力中爆表暫緩（fsm），讀數釘在探測器極限邊緣，不出現「破 9000 卻沒爆」的鏡頭
+      if (charge > 0) display = Math.min(display, OVER_LIMIT - 1);
       if (charge > 0 && now - lastChargeSfx > 150) {
         playChargeTick(charge / SSJ_CHARGE_MS);
         lastChargeSfx = now;

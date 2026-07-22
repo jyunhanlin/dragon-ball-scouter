@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { initial, start, tick, LOCK_MS, SCAN_MS, LOST_MS, type FsmState } from './fsm';
 
-const face = (now: number, displayValue = 0) => ({ now, faceVisible: true, displayValue, charged: false });
-const noFace = (now: number, displayValue = 0) => ({ now, faceVisible: false, displayValue, charged: false });
-const chargedFace = (now: number, displayValue = 0) => ({ now, faceVisible: true, displayValue, charged: true });
+const face = (now: number, displayValue = 0) =>
+  ({ now, faceVisible: true, displayValue, charging: false, charged: false });
+const noFace = (now: number, displayValue = 0) =>
+  ({ now, faceVisible: false, displayValue, charging: false, charged: false });
+const chargingFace = (now: number, displayValue = 0) =>
+  ({ now, faceVisible: true, displayValue, charging: true, charged: false });
+const chargedFace = (now: number, displayValue = 0) =>
+  ({ now, faceVisible: true, displayValue, charging: true, charged: true });
 
 /** 直接構造某個 phase 的狀態，避免每個測試都從頭走流程 */
 const at = (phase: FsmState['phase'], phaseAt: number, lastFaceAt: number): FsmState =>
@@ -77,8 +82,16 @@ describe('ssj（超級賽亞人變身）', () => {
     }
   });
 
-  it('result 同幀蓄滿且 >9000：overload 優先', () => {
-    expect(tick(at('result', 100, 100), chargedFace(200, 9001)).phase).toBe('overload');
+  it('蓄力中（未滿）>9000 暫緩爆表，留在 result', () => {
+    expect(tick(at('result', 100, 100), chargingFace(200, 9001)).phase).toBe('result');
+  });
+
+  it('蓄滿且 >9000：變身優先於爆表（高基礎值也能看到變身）', () => {
+    expect(tick(at('result', 100, 100), chargedFace(200, 9001)).phase).toBe('ssj');
+  });
+
+  it('未蓄力時 >9000 照常爆表', () => {
+    expect(tick(at('result', 100, 100), face(200, 9001)).phase).toBe('overload');
   });
 
   it('ssj: 顯示值 > 9000 → overload；9000 不觸發', () => {

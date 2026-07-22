@@ -19,6 +19,8 @@ export interface FrameInput {
   now: number;
   faceVisible: boolean;
   displayValue: number;
+  /** 蓄力中（charge > 0）：暫緩爆表，讓變身有機會上演 */
+  charging: boolean;
   /** 超賽蓄力已滿（僅 result phase 有意義） */
   charged: boolean;
 }
@@ -35,7 +37,7 @@ export function start(s: FsmState, now: number): FsmState {
 }
 
 export function tick(s: FsmState, input: FrameInput): FsmState {
-  const { now, faceVisible, displayValue, charged } = input;
+  const { now, faceVisible, displayValue, charging, charged } = input;
   const lastFaceAt = faceVisible ? now : s.lastFaceAt;
   const lost = !faceVisible && now - lastFaceAt >= LOST_MS;
 
@@ -55,8 +57,9 @@ export function tick(s: FsmState, input: FrameInput): FsmState {
       return { ...s, lastFaceAt };
     case 'result':
       if (lost) return { phase: 'searching', phaseAt: now, lastFaceAt };
-      if (isOverload(displayValue)) return { phase: 'overload', phaseAt: now, lastFaceAt };
+      // 蓄滿優先於爆表；蓄力中暫緩爆表 — 人人（含高基礎值）都能看到變身上演
       if (charged) return { phase: 'ssj', phaseAt: now, lastFaceAt };
+      if (!charging && isOverload(displayValue)) return { phase: 'overload', phaseAt: now, lastFaceAt };
       return { ...s, lastFaceAt };
     case 'ssj':
       if (lost) return { phase: 'searching', phaseAt: now, lastFaceAt };

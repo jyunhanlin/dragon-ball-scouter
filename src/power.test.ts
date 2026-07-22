@@ -3,7 +3,7 @@ import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
   smooth, median, isOverload, chargeStep, ssjClimb,
   BASE_MIN, BASE_MAX, MAX_BOOST,
-  SSJ_EFFORT, SSJ_CHARGE_MS, SSJ_DECAY, SSJ_CLIMB_MS, SSJ_PEAK,
+  SSJ_EFFORT, SSJ_CHARGE_MS, SSJ_DECAY, SSJ_CLIMB_MS, SSJ_PEAK, SSJ_START_MAX,
 } from './power';
 import type { Pt } from './types';
 
@@ -128,5 +128,10 @@ describe('ssjClimb（變身爬升曲線）', () => {
   });
   it('封頂 SSJ_PEAK', () => {
     expect(ssjClimb(1500, SSJ_CLIMB_MS * 5)).toBe(SSJ_PEAK);
+  });
+  it('起點夾在 SSJ_START_MAX：蓄力時衝破 9000 也保有欣賞窗口', () => {
+    expect(ssjClimb(15000, 0)).toBe(SSJ_START_MAX);
+    // 從夾限起點出發，40% 時間點尚未穿越 9000（窗口 > 1 秒）
+    expect(ssjClimb(15000, SSJ_CLIMB_MS * 0.4)).toBeLessThan(9000);
   });
 });

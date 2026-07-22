@@ -77,6 +77,7 @@ export const SSJ_CHARGE_MS = 1500; // 蓄滿所需毫秒
 export const SSJ_DECAY = 2;        // 放鬆時蓄力流失倍速
 export const SSJ_CLIMB_MS = 2500;  // 變身後爬升時長（欣賞窗口的旋鈕）
 export const SSJ_PEAK = 12000;     // 爬升終點（> 9000 保證觸發爆表）
+export const SSJ_START_MAX = 8000; // 爬升起點上限：蓄力時讀數再高，變身都從這以下起跳（保欣賞窗口）
 
 /** 蓄力累積：發力時 +dt，放鬆時以 SSJ_DECAY 倍速衰減，夾在 [0, SSJ_CHARGE_MS] */
 export function chargeStep(charge: number, effort: number, dtMs: number): number {
@@ -84,8 +85,9 @@ export function chargeStep(charge: number, effort: number, dtMs: number): number
   return Math.min(SSJ_CHARGE_MS, Math.max(0, next));
 }
 
-/** 變身後的確定性爬升：ease-in（t²）從起始值到 SSJ_PEAK，途中必穿越 9000 */
+/** 變身後的確定性爬升：ease-in（t²）從起始值（夾在 SSJ_START_MAX 內）到 SSJ_PEAK，途中必穿越 9000 */
 export function ssjClimb(startValue: number, elapsedMs: number): number {
+  const s = Math.min(startValue, SSJ_START_MAX);
   const t = Math.min(1, elapsedMs / SSJ_CLIMB_MS);
-  return Math.round(startValue + (SSJ_PEAK - startValue) * t * t);
+  return Math.round(s + (SSJ_PEAK - s) * t * t);
 }
