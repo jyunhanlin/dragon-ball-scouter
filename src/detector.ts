@@ -10,14 +10,27 @@ export interface Detector {
   close(): void;
 }
 
-export async function createDetector(): Promise<Detector> {
+/** 載入階段，供啟動畫面把開機文字綁到真實進度 */
+export type DetectorStage = 'wasm' | 'model' | 'warmup';
+
+export async function createDetector(onStage?: (stage: DetectorStage) => void): Promise<Detector> {
   const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+  onStage?.('wasm');
   const landmarker = await FaceLandmarker.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
     runningMode: 'VIDEO',
     numFaces: 3,
     outputFaceBlendshapes: true,
   });
+  onStage?.('model');
+
+  // 暖機：對空白 canvas 跑一次推論，把 GPU shader 編譯成本從首個真實幀移到載入畫面
+  const warmup = document.createElement('canvas');
+  warmup.width = 64;
+  warmup.height = 64;
+  warmup.getContext('2d')?.fillRect(0, 0, 64, 64);
+  landmarker.detectForVideo(warmup, performance.now());
+  onStage?.('warmup');
 
   return {
     detect(video, nowMs) {
