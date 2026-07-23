@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  INERTIA_DAMPING, INERTIA_STIFFNESS, atRest, stepSpring, type Spring3,
+  EFFORT_FULL, INERTIA_DAMPING, INERTIA_STIFFNESS, atRest, stepSpring, updraft, yellIntensity,
+  type Spring3,
 } from './hairdyn';
 
 const ORIGIN = { x: 0, y: 0, z: 0 };
@@ -94,5 +95,77 @@ describe('stepSpring', () => {
     const b = simulate(atRest(0, 100, 0), ORIGIN, 500, 16).at(-1)!;
     expect(b.y).toBeCloseTo(a.x, 9);
     expect(b.vy).toBeCloseTo(a.vx, 9);
+  });
+});
+
+describe('updraft', () => {
+  it('確定性:同 (t, seed) 給同輸出', () => {
+    expect(updraft(1234, 3)).toEqual(updraft(1234, 3));
+  });
+
+  it('單位振幅契約:所有分量 |v| ≤ 1', () => {
+    for (let t = 0; t <= 10000; t += 37) {
+      for (const seed of [0, 1, 5, 9]) {
+        const v = updraft(t, seed);
+        expect(Math.abs(v.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(v.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(v.z)).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('恆朝上:y 分量全程 < 0(y-down 螢幕的上方)', () => {
+    for (let t = 0; t <= 10000; t += 37) {
+      expect(updraft(t, 2).y).toBeLessThan(0);
+    }
+  });
+
+  it('無機械式重複:含各單一頻率成分的週期在內,任何平移都不重合(抓單正弦回歸)', () => {
+    // 2115/2992/3696/4833 = 各成分頻率的週期;退化成任一單正弦都會在對應平移露餡
+    for (const shift of [100, 250, 500, 1000, 2000, 2115, 2992, 3696, 4833, 5000]) {
+      let maxDiff = 0;
+      for (let t = 0; t <= 8000; t += 53) {
+        const a = updraft(t, 4);
+        const b = updraft(t + shift, 4);
+        maxDiff = Math.max(maxDiff, Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z));
+      }
+      expect(maxDiff).toBeGreaterThan(0.05);
+    }
+  });
+
+  it('不同 seed 相位不同:兩束不同步飄', () => {
+    let maxDiff = 0;
+    for (let t = 0; t <= 3000; t += 53) {
+      const a = updraft(t, 0);
+      const b = updraft(t, 7);
+      maxDiff = Math.max(maxDiff, Math.abs(a.x - b.x));
+    }
+    expect(maxDiff).toBeGreaterThan(0.1);
+  });
+});
+
+describe('yellIntensity', () => {
+  it('EFFORT_FULL 錨定 2026-07-22 的實測值 0.45(power.ts SSJ_EFFORT 同源),防紙上數學回歸', () => {
+    expect(EFFORT_FULL).toBeCloseTo(0.45, 9);
+  });
+
+  it('錨定實測:effort 0 → 0、EFFORT_FULL(實測 full-yell)→ 1、超過鉗在 1', () => {
+    expect(yellIntensity(0)).toBe(0);
+    expect(yellIntensity(EFFORT_FULL)).toBe(1);
+    expect(yellIntensity(EFFORT_FULL * 2)).toBe(1);
+    expect(yellIntensity(-0.1)).toBe(0);
+  });
+
+  it('單調不減', () => {
+    let prev = -1;
+    for (let e = 0; e <= 0.6; e += 0.01) {
+      const i = yellIntensity(e);
+      expect(i).toBeGreaterThanOrEqual(prev);
+      prev = i;
+    }
+  });
+
+  it('半程線性:EFFORT_FULL/2 → 0.5', () => {
+    expect(yellIntensity(EFFORT_FULL / 2)).toBeCloseTo(0.5, 9);
   });
 });

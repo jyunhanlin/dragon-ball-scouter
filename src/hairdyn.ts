@@ -27,6 +27,37 @@ export const INERTIA_DAMPING = 0.03; // /ms
 const SUBSTEP_MS = 8;
 const MAX_SIM_MS = 2000;
 
+// ---- 氣場上飄(Aura Updraft)與吼叫連動(Yell Reactivity)----
+
+/**
+ * 實測 full-yell 的 effort 上限。測量值的原始出處是 power.ts SSJ_EFFORT 的
+ * 校準紀錄(CLAUDE.md gotcha:紙上權重和為 1,實際 blendshape 封頂 ~0.45)。
+ * 葉模組規則禁止 hairdyn→power 匯入,故此處持有副本 — 重校準時兩處同步改。
+ */
+export const EFFORT_FULL = 0.45;
+
+/** effort → 吼叫強度 0..1(線性、鉗位);曲線若要調,實機 ?debug 校準後改這裡 */
+export function yellIntensity(effort: number): number {
+  return Math.min(1, Math.max(0, effort / EFFORT_FULL));
+}
+
+/**
+ * 上飄擾動(單位振幅,方向恆朝上=-y):餵給彈簧「目標」,由彈簧自然濾波。
+ * 雙不可通約頻率+seed 相位散佈 → 每束不同步、任何短平移都不重合(無機械感)。
+ * 確定性(無亂數):同輸入同輸出,可測試、可重播。
+ */
+export function updraft(timeMs: number, seed: number): { x: number; y: number; z: number } {
+  // 下列頻率是波形「性格」而非調校旋鈕(振幅/增益才是,見 hair3d 可調常數)
+  const p = seed * 2.399; // 黃金角讓相位在束間均勻散開
+  const a = Math.sin(timeMs * 0.0021 + p);
+  const b = Math.sin(timeMs * 0.00297 + p * 1.7);
+  return {
+    x: 0.5 * (a * 0.7 + b * 0.3),
+    y: -(0.55 + 0.35 * (0.5 * a + 0.5 * Math.sin(timeMs * 0.0013 + p))), // ∈ [-0.9, -0.2]
+    z: 0.4 * Math.sin(timeMs * 0.0017 + p * 2.3),
+  };
+}
+
 /** 靜止於某點的初始彈簧狀態 */
 export function atRest(x: number, y: number, z: number): Spring3 {
   return { x, y, z, vx: 0, vy: 0, vz: 0 };

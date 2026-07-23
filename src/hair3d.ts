@@ -18,7 +18,9 @@ import type { FaceFrame } from './types';
 import {
   SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding, measureAspect, type Dome,
 } from './hairgeo';
-import { INERTIA_DAMPING, INERTIA_STIFFNESS, atRest, stepSpring, type Spring3 } from './hairdyn';
+import {
+  INERTIA_DAMPING, INERTIA_STIFFNESS, atRest, stepSpring, updraft, yellIntensity, type Spring3,
+} from './hairdyn';
 import { coverTransform, toScreen } from './hud';
 
 /** render 的每幀輸入(收攏舊介面的 7 個散裝參數;M2 後續動態只需加欄位) */
@@ -30,6 +32,8 @@ export interface HairRenderInput {
   mirrored: boolean;
   sw: number;
   sh: number;
+  /** 吼叫訊號(effortFromBlend,實測範圍 ~0–0.45):驅動飄動/豎立/金光 */
+  effort: number;
 }
 
 export interface Hair3D {
@@ -45,6 +49,16 @@ export const BLOOM_DOWNSCALE = 4; // 亮部/模糊 RT 對螢幕的縮小倍率
 export const BLOOM_THRESHOLD = 0.55;
 export const BLOOM_STRENGTH = 0.9;
 export const GROW_MS = 350; // 變身瞬間的 grow-in 時長(T7 豎起演出會取代)
+export const EMISSIVE_BASE = 0.25;
+// 氣場上飄/吼叫連動(增益對 yellIntensity 0..1)。吼滿的金光走兩條路:
+// emissive ×1.9(髮體本身變亮)與 bloom 強度 ×1.5,經 threshold 複利後總增益
+// 更高 — 是刻意留給實機校準的餘裕,數值以 ?debug 實測收斂
+export const UPDRAFT_AMP = 0.07; // 上飄振幅(對髮束長的比例)
+export const YELL_FLUTTER_GAIN = 1.6;
+export const YELL_ERECT = 0.12; // 吼叫時髮尖額外上豎偏置(對髮束長的比例)
+export const YELL_GLOW_GAIN = 0.9;
+export const YELL_BLOOM_GAIN = 0.5;
+export const YELL_SMOOTH_MS = 150; // yi 一階低通時間常數:blendshape 逐幀噪聲不進金光
 
 const QUAD_VERT = /* glsl */ `
 varying vec2 vUv;
@@ -160,7 +174,7 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
     color: 0xffd75e,
     gradientMap,
     emissive: 0xffaa00,
-    emissiveIntensity: 0.25,
+    emissiveIntensity: EMISSIVE_BASE,
   });
   const outlineMat = new THREE.MeshBasicMaterial({ color: 0x241300, side: THREE.BackSide });
 
@@ -171,8 +185,9 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
     s: (typeof SPIKES)[number];
     uBend: THREE.IUniform<THREE.Vector3>;
     spring: Spring3;
+    seed: number;
   }[] = [];
-  for (const s of SPIKES) {
+  SPIKES.forEach((s, i) => {
     // hairgeo 的局部座標即「髮根在原點、往 -y 長、bend 往 +x 彎」,免旋轉平移
     const geo = toBufferGeometry(buildSpike(s));
     // 材質 clone:uBend 是 per-髮束狀態;shader 原始碼相同 → program 仍共用
@@ -186,8 +201,8 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
     const hull = new THREE.Mesh(geo, hullMat);
     hull.scale.setScalar(OUTLINE_SCALE);
     group.add(hull, spike);
-    pairs.push({ spike, hull, s, uBend, spring: atRest(0, 0, 0) });
-  }
+    pairs.push({ spike, hull, s, uBend, spring: atRest(0, 0, 0), seed: i });
+  });
   group.visible = false;
   scene.add(group);
 
@@ -248,8 +263,10 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   let lastSsjMs = Infinity;
   let domeReady = false;
   let springsSeeded = false;
+  let yiSmooth = 0;
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
+  const rigidV = new THREE.Vector3();
   const tipWorld = new THREE.Vector3();
   const bendV = new THREE.Vector3();
   const invQ = new THREE.Quaternion();
@@ -293,6 +310,7 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
       if (ssjMs < lastSsjMs) {
         domeReady = false;
         springsSeeded = false;
+        yiSmooth = 0;
       }
       lastSsjMs = ssjMs;
       if (!domeReady) {
@@ -316,23 +334,38 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
       group.scale.set(faceW, faceW * eased, faceW);
       group.visible = true;
 
-      // 慣性甩動:每束一顆彈簧追剛體髮尖的世界座標,彈簧與剛體的差
-      // 反轉回髮束局部(臉寬單位)後餵給 uBend(spineT² 加權 → 尖端甩、根不動)
+      // 慣性甩動+氣場上飄+吼叫連動:每束一顆彈簧,目標=剛體髮尖+上飄擾動+吼叫上豎;
+      // 彈簧位置與「剛體」尖端的差 = 完整表現的擾動(對剛體差,不是對目標差 —
+      // 對目標差會讓穩態擾動自我抵銷,上豎偏置直接歸零)
+      yiSmooth += (yellIntensity(input.effort) - yiSmooth) * Math.min(1, dtMs / YELL_SMOOTH_MS);
+      const yi = yiSmooth;
+      const emissiveNow = EMISSIVE_BASE * (1 + YELL_GLOW_GAIN * yi);
       group.updateMatrixWorld(true);
       for (const p of pairs) {
-        tipWorld.set(p.s.bend * p.s.h, -p.s.h, 0).applyMatrix4(p.spike.matrixWorld);
+        rigidV.set(p.s.bend * p.s.h, -p.s.h, 0).applyMatrix4(p.spike.matrixWorld);
+        // 擾動加在「目標」上,由彈簧自然濾波成有機的搖曳;吼叫放大飄動並把髮尖往上拉
+        const fl = updraft(ssjMs, p.seed);
+        const amp = faceW * p.s.h * UPDRAFT_AMP * (1 + YELL_FLUTTER_GAIN * yi);
+        tipWorld.set(
+          rigidV.x + fl.x * amp,
+          rigidV.y + fl.y * amp - faceW * p.s.h * YELL_ERECT * yi,
+          rigidV.z + fl.z * amp,
+        );
         if (!springsSeeded) p.spring = atRest(tipWorld.x, tipWorld.y, tipWorld.z);
         // 長髮束較軟(stiffness ∝ 1/h)→ 甩動幅度隨長度自然分層
         p.spring = stepSpring(p.spring, tipWorld, dtMs, INERTIA_STIFFNESS / p.s.h, INERTIA_DAMPING);
-        bendV.set(p.spring.x - tipWorld.x, p.spring.y - tipWorld.y, p.spring.z - tipWorld.z);
+        bendV.set(p.spring.x - rigidV.x, p.spring.y - rigidV.y, p.spring.z - rigidV.z);
         // 世界 → 髮束局部:反施加旋轉、除以臉寬(grow 期間 y 縮放略有近似誤差,可忽略)
         invQ.copy(group.quaternion).multiply(p.spike.quaternion).invert();
         bendV.applyQuaternion(invQ).divideScalar(faceW);
         const maxB = MAX_BEND * p.s.h;
         if (bendV.length() > maxB) bendV.setLength(maxB);
         p.uBend.value.copy(bendV);
+        (p.spike.material as THREE.MeshToonMaterial).emissiveIntensity = emissiveNow;
       }
       springsSeeded = true;
+      (compositeQuad.material as THREE.ShaderMaterial).uniforms.uStrength.value =
+        BLOOM_STRENGTH * (1 + YELL_BLOOM_GAIN * yi);
 
       // 1) 場景 → 透明 baseRT(髮體 straight alpha)
       renderer.setRenderTarget(baseRT);

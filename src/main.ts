@@ -2,6 +2,7 @@ import './style.css';
 import { startCamera, type CameraHandle } from './camera';
 import { createDetector, type Detector, type DetectorStage } from './detector';
 import type { Hair3D } from './hair3d';
+import { EFFORT_FULL } from './hairdyn';
 import {
   computeRatios, basePower, effortFromBlend, boostMultiplier,
   smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT, OVER_LIMIT,
@@ -311,6 +312,8 @@ function loop(): void {
       mirrored: false,
       sw,
       sh,
+      // 合成 effort 掃描 0→EFFORT_FULL(實測 full-yell 上限):免相機目測吼叫連動的兩端
+      effort: EFFORT_FULL * (0.5 + 0.5 * Math.sin(now / 1200)),
     });
   } else {
     hair3d?.render({
@@ -321,6 +324,7 @@ function loop(): void {
       mirrored: facing === 'user',
       sw: canvas.clientWidth,
       sh: canvas.clientHeight,
+      effort: frame ? effortFromBlend(frame.blend) : 0,
     });
   }
 
