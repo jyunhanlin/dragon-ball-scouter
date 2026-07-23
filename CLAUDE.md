@@ -50,3 +50,17 @@ camera.ts (getUserMedia stream)
 - `packageManager` pnpm version matters in CI: 11.12.0 crashed `pnpm/action-setup`'s self-update (fixed at 11.14+). Don't downgrade it.
 - `pnpm test` (vitest) does not type-check; `pnpm build`'s `tsc` step does, and it includes test files. Run build before claiming type safety.
 - `docs/superpowers/` (design spec + implementation plan) is intentionally untracked (gitignored) — local reference only.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live in GitHub Issues (`jyunhanlin/dragon-ball-scouter`, via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary; label string = role name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
