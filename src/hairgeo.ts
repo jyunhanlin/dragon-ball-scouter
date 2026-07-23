@@ -7,6 +7,8 @@
  * 彎曲 = 以 spineT 為權重對頂點做位移,幾何本體不用重建。
  */
 
+import type { Pt } from './types';
+
 /** 髮束規格(臉寬單位)。tilt 屬於擺放不屬於幾何,由 hair3d 以 rotation 施加 */
 export interface SpikeSpec {
   /** 髮束長 */
@@ -118,6 +120,101 @@ export function buildSpike(spec: SpikeSpec, radialSegments = 8, rings = 6): Spik
     indices[k++] = tip;
   }
   return { positions, normals, spineT, indices };
+}
+
+/** 髮束擺放:x/z 為圓頂足印座標(臉寬單位)、tilt 為外傾角 */
+export interface SpikePlacement extends SpikeSpec {
+  x: number;
+  z: number;
+  tilt: number;
+}
+
+// 髮束配置表(中央高、兩側外掠;bend 與 tilt 同號=往外勾)— 調型改表,不改演算法
+export const SPIKES: SpikePlacement[] = [
+  // 後排:略矮、往後收
+  { x: -0.42, h: 0.65, tilt: -0.5, z: -0.13, bend: -0.28, r: 0.13 },
+  { x: -0.14, h: 0.82, tilt: -0.15, z: -0.15, bend: -0.12, r: 0.15 },
+  { x: 0.14, h: 0.8, tilt: 0.15, z: -0.15, bend: 0.12, r: 0.15 },
+  { x: 0.42, h: 0.62, tilt: 0.5, z: -0.13, bend: 0.28, r: 0.13 },
+  // 前排:高、外傾
+  { x: -0.5, h: 0.72, tilt: -0.65, z: 0, bend: -0.35, r: 0.13 },
+  { x: -0.3, h: 1.0, tilt: -0.35, z: 0, bend: -0.25, r: 0.15 },
+  { x: -0.1, h: 1.28, tilt: -0.1, z: 0, bend: -0.15, r: 0.17 },
+  { x: 0.1, h: 1.22, tilt: 0.12, z: 0, bend: 0.16, r: 0.16 },
+  { x: 0.3, h: 0.96, tilt: 0.38, z: 0, bend: 0.27, r: 0.14 },
+  { x: 0.5, h: 0.68, tilt: 0.68, z: 0, bend: 0.36, r: 0.12 },
+];
+
+// ---- 頭皮圓頂(Scalp Dome):髮根分佈面 ----
+
+/** 半橢球(臉寬單位、鼻樑為原點、y-down):髮根落在上殼,髮束沿法線生長 */
+export interface Dome {
+  cx: number;
+  cy: number;
+  cz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+}
+
+// 圓頂比例(對臉寬;由造型目測校準,T4 對基準圖時再調)
+export const DOME_RX = 0.58; // 半寬:略寬於臉框,髮叢才蓋得住鬢角上緣
+export const DOME_RY_PER_ASPECT = 0.9; // 高度對上臉高比例(aspect 定義見 fitDome)
+export const DOME_RZ = 0.5; // 前後深
+export const DOME_CY = -0.18; // 中心高度(鼻樑上方)
+export const DOME_CZ = -0.08; // 中心略往後,前額髮根才不會浮在臉前
+const FOOTPRINT_MAX = 0.995; // 足印半徑上限:貼著赤道會讓法線貼平、y 梯度退化
+
+// aspect 鉗位:2D 投影在側轉/點頭時透縮,量出來的比例會失真;
+// 鉗在合理頭型範圍內,把「轉著頭變身」凍結到的誤差鎖住
+export const ASPECT_MIN = 0.24;
+export const ASPECT_MAX = 0.4;
+
+/**
+ * 從 landmark 量上臉高/臉寬:10(額頂)↔168(鼻樑) ÷ 234↔454(兩頰)。
+ * 用上臉不用下巴(152)— 變身時張嘴大吼會把臉量長。結果經 ASPECT_MIN/MAX 鉗位。
+ */
+export function measureAspect(points: readonly Pt[]): number {
+  const upper = Math.hypot(points[10].x - points[168].x, points[10].y - points[168].y);
+  const width = Math.hypot(points[454].x - points[234].x, points[454].y - points[234].y) || 1;
+  return Math.min(ASPECT_MAX, Math.max(ASPECT_MIN, upper / width));
+}
+
+/**
+ * 由臉部比例擬合圓頂。aspect 來自 measureAspect,由呼叫端在每次變身第一幀
+ * 凍結(那一刻使用者通常正對鏡頭;若不是,鉗位保證圓頂仍在合理範圍)。
+ */
+export function fitDome(aspect: number): Dome {
+  return {
+    cx: 0,
+    cy: DOME_CY,
+    cz: DOME_CZ,
+    rx: DOME_RX,
+    ry: DOME_RY_PER_ASPECT * aspect,
+    rz: DOME_RZ,
+  };
+}
+
+/** 把配置表的 (x,z) 髮根座標投上圓頂上殼;足印外的座標 clamp 回邊緣 */
+export function domePoint(d: Dome, x: number, z: number): { x: number; y: number; z: number } {
+  let ex = (x - d.cx) / d.rx;
+  let ez = (z - d.cz) / d.rz;
+  const rad = Math.hypot(ex, ez);
+  if (rad > FOOTPRINT_MAX) {
+    ex *= FOOTPRINT_MAX / rad;
+    ez *= FOOTPRINT_MAX / rad;
+  }
+  const y = d.cy - d.ry * Math.sqrt(1 - ex * ex - ez * ez);
+  return { x: d.cx + ex * d.rx, y, z: d.cz + ez * d.rz };
+}
+
+/** 圓頂面上一點的外法線(橢球隱函數梯度,單位化)= 髮束的生長方向 */
+export function domeNormal(d: Dome, p: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
+  const gx = (p.x - d.cx) / (d.rx * d.rx);
+  const gy = (p.y - d.cy) / (d.ry * d.ry);
+  const gz = (p.z - d.cz) / (d.rz * d.rz);
+  const len = Math.hypot(gx, gy, gz) || 1;
+  return { x: gx / len, y: gy / len, z: gz / len };
 }
 
 /**

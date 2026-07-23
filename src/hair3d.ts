@@ -15,7 +15,9 @@
  */
 import * as THREE from 'three';
 import type { FaceFrame } from './types';
-import { buildSpike, flipWinding } from './hairgeo';
+import {
+  SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding, measureAspect, type Dome,
+} from './hairgeo';
 import { coverTransform, toScreen } from './hud';
 
 export interface Hair3D {
@@ -30,22 +32,7 @@ export interface Hair3D {
   ): void;
 }
 
-// 髮束配置:x/z 為臉寬單位、h 為髮束長、tilt 為外傾角(中央高、兩側外掠)、
-// bend 為彎曲量(與 tilt 同號=往外勾,髮束帶弧度而非直挺)、r 為髮根半徑
-const SPIKES = [
-  // 後排:略矮、往後收
-  { x: -0.42, h: 0.65, tilt: -0.5, z: -0.13, bend: -0.28, r: 0.13 },
-  { x: -0.14, h: 0.82, tilt: -0.15, z: -0.15, bend: -0.12, r: 0.15 },
-  { x: 0.14, h: 0.8, tilt: 0.15, z: -0.15, bend: 0.12, r: 0.15 },
-  { x: 0.42, h: 0.62, tilt: 0.5, z: -0.13, bend: 0.28, r: 0.13 },
-  // 前排:高、外傾
-  { x: -0.5, h: 0.72, tilt: -0.65, z: 0, bend: -0.35, r: 0.13 },
-  { x: -0.3, h: 1.0, tilt: -0.35, z: 0, bend: -0.25, r: 0.15 },
-  { x: -0.1, h: 1.28, tilt: -0.1, z: 0, bend: -0.15, r: 0.17 },
-  { x: 0.1, h: 1.22, tilt: 0.12, z: 0, bend: 0.16, r: 0.16 },
-  { x: 0.3, h: 0.96, tilt: 0.38, z: 0, bend: 0.27, r: 0.14 },
-  { x: 0.5, h: 0.68, tilt: 0.68, z: 0, bend: 0.36, r: 0.12 },
-];
+// 髮束配置表(SPIKES)與圓頂/幾何演算法都在 hairgeo.ts(純、受測);這裡只組裝與渲染
 
 // 可調常數(T4 造型調校的旋鈕)
 export const OUTLINE_SCALE = 1.08;
@@ -159,21 +146,36 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   const outlineMat = new THREE.MeshBasicMaterial({ color: 0x241300, side: THREE.BackSide });
 
   const group = new THREE.Group();
+  const pairs: { spike: THREE.Mesh; hull: THREE.Mesh; s: (typeof SPIKES)[number] }[] = [];
   for (const s of SPIKES) {
     // hairgeo 的局部座標即「髮根在原點、往 -y 長、bend 往 +x 彎」,免旋轉平移
     const geo = toBufferGeometry(buildSpike(s));
     const spike = new THREE.Mesh(geo, mat);
-    spike.position.set(s.x, -0.5, s.z); // 髮根提到頭頂上緣(pivot 在鼻樑)
-    spike.rotation.z = -s.tilt;
     // inverted hull 描邊:同幾何放大、背面、深色
     const hull = new THREE.Mesh(geo, outlineMat);
-    hull.position.copy(spike.position);
-    hull.rotation.copy(spike.rotation);
     hull.scale.setScalar(OUTLINE_SCALE);
     group.add(hull, spike);
+    pairs.push({ spike, hull, s });
   }
   group.visible = false;
   scene.add(group);
+
+  // 髮根落點與生長方向依頭皮圓頂;圓頂由變身第一幀的臉部比例凍結(見 fitDome)
+  const UP = new THREE.Vector3(0, -1, 0);
+  const nrm = new THREE.Vector3();
+  const roll = new THREE.Quaternion();
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  function placeSpikes(dome: Dome): void {
+    for (const { spike, hull, s } of pairs) {
+      const p = domePoint(dome, s.x, s.z);
+      const n = domeNormal(dome, p);
+      spike.position.set(p.x, p.y, p.z);
+      spike.quaternion.setFromUnitVectors(UP, nrm.set(n.x, n.y, n.z));
+      spike.quaternion.multiply(roll.setFromAxisAngle(zAxis, -s.tilt));
+      hull.position.copy(spike.position);
+      hull.quaternion.copy(spike.quaternion);
+    }
+  }
 
   // ---- bloom 鏈的 RT 與全螢幕 pass(單 context,無 EffectComposer)----
   const rtOpts: THREE.RenderTargetOptions = {
@@ -212,6 +214,8 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   let w = 0;
   let h = 0;
   let shown = false;
+  let lastSsjMs = Infinity;
+  let domeReady = false;
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
 
@@ -243,6 +247,14 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
         camera.top = 0;
         camera.bottom = sh;
         camera.updateProjectionMatrix();
+      }
+
+      // 每次變身的第一幀量測臉部比例、擬合圓頂並擺放髮根(之後凍結,轉頭不重算)
+      if (ssjMs < lastSsjMs) domeReady = false;
+      lastSsjMs = ssjMs;
+      if (!domeReady) {
+        placeSpikes(fitDome(measureAspect(frame.points)));
+        domeReady = true;
       }
 
       const t = coverTransform(videoW, videoH, sw, sh);

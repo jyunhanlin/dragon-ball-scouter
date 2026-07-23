@@ -37,17 +37,26 @@ const debugEl = urlParams.has('debug')
 const hairDebug = urlParams.has('hair');
 if (hairDebug) startOverlay.hidden = true;
 
-function fakeFace(sw: number, sh: number): import('./types').FaceFrame {
-  // 稀疏陣列：只填 hair3d 實際讀的 168（鼻樑）。若髮層開始讀其他 landmark，
-  // 這裡會以 undefined 炸在 toScreen — 屆時補上對應假點
+function fakeFace(sw: number, sh: number, now: number): import('./types').FaceFrame {
+  // 稀疏陣列：只填 hair3d 實際讀的 landmark（168 鼻樑、10 額頂、234/454 兩頰）。
+  // 髮層若新增讀取，會以 undefined 炸在讀取點 — 屆時補上對應假點
   const points: import('./types').Pt[] = [];
-  points[168] = { x: sw / 2, y: sh * 0.45 }; // 鼻樑（髮叢 pivot）擺在畫面中上
+  const cx = sw / 2;
+  const cy = sh * 0.45;
   const w = sw * 0.24;
+  points[168] = { x: cx, y: cy }; // 鼻樑（髮叢 pivot）擺在畫面中上
+  points[10] = { x: cx, y: cy - w * 0.31 }; // 額頂：上臉高 ≈ 0.31 臉寬
+  points[234] = { x: cx - w / 2, y: cy };
+  points[454] = { x: cx + w / 2, y: cy };
+  // 擺頭 ±40°（yaw，column-major 旋轉矩陣）：免相機檢視頭皮圓頂的側轉體積感
+  const yaw = Math.sin(now / 1500) * (40 * Math.PI) / 180;
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
   return {
     points,
     blend: {},
-    box: { x: sw / 2 - w / 2, y: sh * 0.45 - w * 0.6, w, h: w * 1.25 },
-    pose: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], // 正面朝向（單位矩陣）
+    box: { x: cx - w / 2, y: cy - w * 0.6, w, h: w * 1.25 },
+    pose: [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1],
   };
 }
 
@@ -294,7 +303,7 @@ function loop(): void {
     // 假 frame 用螢幕尺寸當 video 尺寸（coverTransform 成恆等），不依賴相機
     const sw = canvas.clientWidth;
     const sh = canvas.clientHeight;
-    hair3d?.render(fakeFace(sw, sh), now, sw, sh, false, sw, sh);
+    hair3d?.render(fakeFace(sw, sh, now), now, sw, sh, false, sw, sh);
   } else {
     hair3d?.render(
       transformed ? frame : null,

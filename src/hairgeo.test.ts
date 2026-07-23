@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildSpike, flipWinding, type SpikeSpec } from './hairgeo';
+import {
+  ASPECT_MAX, ASPECT_MIN, SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding,
+  measureAspect, type SpikeSpec,
+} from './hairgeo';
+import type { Pt } from './types';
 
 const SPEC: SpikeSpec = { h: 1.0, bend: 0.3, r: 0.15 };
 
@@ -191,6 +195,109 @@ describe('buildSpike:winding 方向', () => {
       const nz = (g.normals[ia * 3 + 2] + g.normals[ib * 3 + 2] + g.normals[ic * 3 + 2]) / 3;
       expect(fx * nx + fy * ny + fz * nz).toBeGreaterThan(0);
     }
+  });
+});
+
+/** 橢球隱函數 F(p)=((x-cx)/rx)²+((y-cy)/ry)²+((z-cz)/rz)²-1:面上=0、外>0、內<0 */
+function ellipsoidF(d: ReturnType<typeof fitDome>, p: { x: number; y: number; z: number }): number {
+  return ((p.x - d.cx) / d.rx) ** 2 + ((p.y - d.cy) / d.ry) ** 2 + ((p.z - d.cz) / d.rz) ** 2 - 1;
+}
+
+describe('fitDome', () => {
+  it('半徑皆為正,apex(經 domePoint)在中心上方(y-down:apex y < cy)', () => {
+    const d = fitDome(0.31);
+    expect(d.rx).toBeGreaterThan(0);
+    expect(d.ry).toBeGreaterThan(0);
+    expect(d.rz).toBeGreaterThan(0);
+    expect(domePoint(d, d.cx, d.cz).y).toBeLessThan(d.cy);
+  });
+
+  it('臉越長(aspect 越大)圓頂越高:ry 隨 aspect 等比放大(實際量程)', () => {
+    const a = fitDome(0.25);
+    const b = fitDome(0.35);
+    expect(b.ry / a.ry).toBeCloseTo(0.35 / 0.25, 5);
+    expect(b.rx).toBeCloseTo(a.rx, 5); // 寬度不隨臉長變
+  });
+});
+
+describe('measureAspect', () => {
+  function facePoints(upperH: number, faceW: number): Pt[] {
+    const pts: Pt[] = [];
+    pts[168] = { x: 0, y: 0 };
+    pts[10] = { x: 0, y: -upperH };
+    pts[234] = { x: -faceW / 2, y: 0 };
+    pts[454] = { x: faceW / 2, y: 0 };
+    return pts;
+  }
+
+  it('典型臉:上臉高 31、臉寬 100 → 0.31', () => {
+    expect(measureAspect(facePoints(31, 100))).toBeCloseTo(0.31, 6);
+  });
+
+  it('透縮失真被鉗位:過長鉗到 ASPECT_MAX、過扁鉗到 ASPECT_MIN', () => {
+    expect(measureAspect(facePoints(80, 100))).toBe(ASPECT_MAX);
+    expect(measureAspect(facePoints(5, 100))).toBe(ASPECT_MIN);
+  });
+
+  it('平面旋轉不變(量的是距離比,鏡像/歪頭不影響)', () => {
+    const pts = facePoints(31, 100);
+    const rotated: Pt[] = [];
+    for (const key of [10, 168, 234, 454]) {
+      const p = pts[key];
+      rotated[key] = { x: -p.y, y: p.x }; // 旋轉 90°
+    }
+    expect(measureAspect(rotated)).toBeCloseTo(0.31, 6);
+  });
+});
+
+describe('SPIKES 配置表 × 圓頂', () => {
+  it('全部髮根落在橢球面上且未被 clamp(座標原樣保留)', () => {
+    const dome = fitDome(0.31);
+    for (const s of SPIKES) {
+      const p = domePoint(dome, s.x, s.z);
+      expect(ellipsoidF(dome, p)).toBeCloseTo(0, 6);
+      expect(p.x).toBeCloseTo(s.x, 6); // clamp 會動座標 — 沒動表示在足印內
+      expect(p.z).toBeCloseTo(s.z, 6);
+    }
+  });
+});
+
+describe('domePoint / domeNormal', () => {
+  const dome = fitDome(1.25);
+
+  it('髮根落在橢球面上(隱函數 ≈ 0)且在上殼(y ≤ cy)', () => {
+    for (const [x, z] of [[0, 0], [0.3, -0.1], [-0.45, 0.1], [0.5, -0.13]] as const) {
+      const p = domePoint(dome, x, z);
+      expect(ellipsoidF(dome, p)).toBeCloseTo(0, 6);
+      expect(p.y).toBeLessThanOrEqual(dome.cy + 1e-9);
+    }
+  });
+
+  it('足印外的座標被 clamp 回邊緣:仍在面上、方向保留、貼近赤道', () => {
+    const p = domePoint(dome, dome.cx + dome.rx * 3, dome.cz);
+    expect(ellipsoidF(dome, p)).toBeCloseTo(0, 6);
+    expect(p.x).toBeGreaterThan(dome.cx); // 方向沒被吃掉
+    expect(p.x).toBeLessThan(dome.cx + dome.rx * 3); // 確實被拉回
+    expect(p.y).toBeGreaterThan(dome.cy - dome.ry * 0.15); // 邊緣點貼近赤道高度
+  });
+
+  it('法線單位長且指向外側(沿法線外移 F>0、內移 F<0)', () => {
+    for (const [x, z] of [[0, 0], [0.35, -0.12], [-0.4, 0.05]] as const) {
+      const p = domePoint(dome, x, z);
+      const n = domeNormal(dome, p);
+      expect(Math.hypot(n.x, n.y, n.z)).toBeCloseTo(1, 6);
+      const eps = 1e-3;
+      expect(ellipsoidF(dome, { x: p.x + n.x * eps, y: p.y + n.y * eps, z: p.z + n.z * eps })).toBeGreaterThan(0);
+      expect(ellipsoidF(dome, { x: p.x - n.x * eps, y: p.y - n.y * eps, z: p.z - n.z * eps })).toBeLessThan(0);
+    }
+  });
+
+  it('圓頂頂點的法線朝正上(y-down 的 -y)', () => {
+    const apex = domePoint(dome, dome.cx, dome.cz);
+    const n = domeNormal(dome, apex);
+    expect(n.x).toBeCloseTo(0, 6);
+    expect(n.z).toBeCloseTo(0, 6);
+    expect(n.y).toBeLessThan(0);
   });
 });
 
