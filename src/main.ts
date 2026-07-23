@@ -32,6 +32,25 @@ const debugEl = urlParams.has('debug')
   ? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'debug' }))
   : null;
 
+// ?hair 免相機/免變身強制渲染髮型：合成管線驗證與造型調校（對基準圖）用。
+// 啟動遮罩 rgba(0,10,4,.88) 會把底下的髮層壓暗到無法判色，調參模式直接隱藏
+const hairDebug = urlParams.has('hair');
+if (hairDebug) startOverlay.hidden = true;
+
+function fakeFace(sw: number, sh: number): import('./types').FaceFrame {
+  // 稀疏陣列：只填 hair3d 實際讀的 168（鼻樑）。若髮層開始讀其他 landmark，
+  // 這裡會以 undefined 炸在 toScreen — 屆時補上對應假點
+  const points: import('./types').Pt[] = [];
+  points[168] = { x: sw / 2, y: sh * 0.45 }; // 鼻樑（髮叢 pivot）擺在畫面中上
+  const w = sw * 0.24;
+  return {
+    points,
+    blend: {},
+    box: { x: sw / 2 - w / 2, y: sh * 0.45 - w * 0.6, w, h: w * 1.25 },
+    pose: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], // 正面朝向（單位矩陣）
+  };
+}
+
 
 let cam: CameraHandle | null = null;
 let detector: Detector | null = null;
@@ -271,15 +290,22 @@ function loop(): void {
 
   // 3D 刺蝟頭只在變身期間渲染（模組內部處理 display/skip，平時零成本）
   const transformed = ssjAt > 0;
-  hair3d?.render(
-    transformed ? frame : null,
-    transformed ? now - ssjAt : 0,
-    video.videoWidth,
-    video.videoHeight,
-    facing === 'user',
-    canvas.clientWidth,
-    canvas.clientHeight,
-  );
+  if (hairDebug) {
+    // 假 frame 用螢幕尺寸當 video 尺寸（coverTransform 成恆等），不依賴相機
+    const sw = canvas.clientWidth;
+    const sh = canvas.clientHeight;
+    hair3d?.render(fakeFace(sw, sh), now, sw, sh, false, sw, sh);
+  } else {
+    hair3d?.render(
+      transformed ? frame : null,
+      transformed ? now - ssjAt : 0,
+      video.videoWidth,
+      video.videoHeight,
+      facing === 'user',
+      canvas.clientWidth,
+      canvas.clientHeight,
+    );
+  }
 
   if (debugEl) {
     const jaw = frame?.blend.jawOpen ?? 0;
