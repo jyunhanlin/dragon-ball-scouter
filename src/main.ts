@@ -36,6 +36,7 @@ const debugEl = urlParams.has('debug')
 // ?hair 免相機/免變身強制渲染髮型：合成管線驗證與造型調校（對基準圖）用。
 // 啟動遮罩 rgba(0,10,4,.88) 會把底下的髮層壓暗到無法判色，調參模式直接隱藏
 const hairDebug = urlParams.has('hair');
+const HAIR_CYCLE_MS = 4000; // ?hair 的 ssjMs 循環長度：豎起演出每輪重播
 if (hairDebug) startOverlay.hidden = true;
 
 function fakeFace(sw: number, sh: number, now: number): import('./types').FaceFrame {
@@ -306,7 +307,8 @@ function loop(): void {
     const sh = canvas.clientHeight;
     hair3d?.render({
       frame: fakeFace(sw, sh, now),
-      ssjMs: now,
+      // 循環重播:ssjMs 歸零觸發 hair3d 的重置 → 豎起演出重來,T4/T7 調參用
+      ssjMs: now % HAIR_CYCLE_MS,
       videoW: sw,
       videoH: sh,
       mirrored: false,

@@ -63,6 +63,17 @@ describe('stepSpring', () => {
     expect(Math.abs(s.vx)).toBeLessThan(0.01);
   });
 
+  it('最軟的執行期彈簧仍過衝(豎起演出的載重性質:垂軟→豎起要衝過頭)', () => {
+    const soft = INERTIA_STIFFNESS / 1.28;
+    let s = atRest(100, 0, 0);
+    let minX = 100;
+    for (let t = 0; t < 2000; t += 16) {
+      s = stepSpring(s, ORIGIN, 16, soft, INERTIA_DAMPING);
+      minX = Math.min(minX, s.x);
+    }
+    expect(minX).toBeLessThan(0); // 穿越目標=過衝存在
+  });
+
   it('滯後:目標跳到 100,單一 16ms 步只追上一小段(< 30%)', () => {
     const s = stepSpring(atRest(0, 0, 0), { x: 100, y: 0, z: 0 }, 16, INERTIA_STIFFNESS, INERTIA_DAMPING);
     expect(s.x).toBeGreaterThanOrEqual(0);

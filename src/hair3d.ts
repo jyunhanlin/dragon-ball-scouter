@@ -48,7 +48,11 @@ export const OUTLINE_SCALE = 1.08;
 export const BLOOM_DOWNSCALE = 4; // 亮部/模糊 RT 對螢幕的縮小倍率
 export const BLOOM_THRESHOLD = 0.55;
 export const BLOOM_STRENGTH = 0.9;
-export const GROW_MS = 350; // 變身瞬間的 grow-in 時長(T7 豎起演出會取代)
+// 豎起演出(Rise):彈簧種在垂軟位,由欠阻尼彈簧自然演出 垂軟→豎起→過衝→收斂
+export const RISE_MS = 700; // 演出收斂窗:彎曲上限與金光爆發在此窗內回歸常態
+export const RISE_DROOP = 0.5; // 垂軟種子位:髮尖從髮根往下垂的比例(對髮束長)
+export const RISE_MAX_BEND = 0.85; // 演出期間的彎曲上限(垂軟需要遠超平時的 MAX_BEND)
+export const RISE_FLASH_GAIN = 1.2; // 金光爆發強度(隨演出窗線性衰減)
 export const EMISSIVE_BASE = 0.25;
 // 氣場上飄/吼叫連動(增益對 yellIntensity 0..1)。吼滿的金光走兩條路:
 // emissive ×1.9(髮體本身變亮)與 bloom 強度 ×1.5,經 threshold 複利後總增益
@@ -267,6 +271,7 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const rigidV = new THREE.Vector3();
+  const rootV = new THREE.Vector3();
   const tipWorld = new THREE.Vector3();
   const bendV = new THREE.Vector3();
   const invQ = new THREE.Quaternion();
@@ -328,10 +333,8 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
       if (mirrored) group.quaternion.set(-q.x, -q.y, q.z, q.w);
       else group.quaternion.set(-q.x, q.y, -q.z, q.w);
 
-      const grow = Math.min(1, ssjMs / GROW_MS);
-      const eased = 1 - (1 - grow) * (1 - grow);
       const faceW = frame.box.w * t.scale; // 臉寬(螢幕像素)= 髮束的基準尺度
-      group.scale.set(faceW, faceW * eased, faceW);
+      group.scale.set(faceW, faceW, faceW); // 出場動畫=豎起演出(垂軟種子),不再縮放 grow-in
       group.visible = true;
 
       // 慣性甩動+氣場上飄+吼叫連動:每束一顆彈簧,目標=剛體髮尖+上飄擾動+吼叫上豎;
@@ -340,6 +343,9 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
       yiSmooth += (yellIntensity(input.effort) - yiSmooth) * Math.min(1, dtMs / YELL_SMOOTH_MS);
       const yi = yiSmooth;
       const emissiveNow = EMISSIVE_BASE * (1 + YELL_GLOW_GAIN * yi);
+      // 豎起演出窗:彎曲上限從 RISE_MAX_BEND 收斂回 MAX_BEND、金光爆發線性熄滅
+      const riseT = Math.min(1, ssjMs / RISE_MS);
+      const maxBendNow = RISE_MAX_BEND + (MAX_BEND - RISE_MAX_BEND) * riseT;
       group.updateMatrixWorld(true);
       for (const p of pairs) {
         rigidV.set(p.s.bend * p.s.h, -p.s.h, 0).applyMatrix4(p.spike.matrixWorld);
@@ -351,21 +357,26 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
           rigidV.y + fl.y * amp - faceW * p.s.h * YELL_ERECT * yi,
           rigidV.z + fl.z * amp,
         );
-        if (!springsSeeded) p.spring = atRest(tipWorld.x, tipWorld.y, tipWorld.z);
+        if (!springsSeeded) {
+          // 豎起演出:彈簧種在「垂軟位」(髮根正下方),欠阻尼彈簧自己演完
+          // 垂軟 → 豎起 → 過衝 → 收斂(最軟執行期彈簧的過衝存在性有 hairdyn 測試釘住)
+          rootV.set(0, 0, 0).applyMatrix4(p.spike.matrixWorld);
+          p.spring = atRest(rootV.x, rootV.y + faceW * p.s.h * RISE_DROOP, rootV.z);
+        }
         // 長髮束較軟(stiffness ∝ 1/h)→ 甩動幅度隨長度自然分層
         p.spring = stepSpring(p.spring, tipWorld, dtMs, INERTIA_STIFFNESS / p.s.h, INERTIA_DAMPING);
         bendV.set(p.spring.x - rigidV.x, p.spring.y - rigidV.y, p.spring.z - rigidV.z);
-        // 世界 → 髮束局部:反施加旋轉、除以臉寬(grow 期間 y 縮放略有近似誤差,可忽略)
+        // 世界 → 髮束局部:反施加旋轉、除以臉寬
         invQ.copy(group.quaternion).multiply(p.spike.quaternion).invert();
         bendV.applyQuaternion(invQ).divideScalar(faceW);
-        const maxB = MAX_BEND * p.s.h;
+        const maxB = maxBendNow * p.s.h;
         if (bendV.length() > maxB) bendV.setLength(maxB);
         p.uBend.value.copy(bendV);
         (p.spike.material as THREE.MeshToonMaterial).emissiveIntensity = emissiveNow;
       }
       springsSeeded = true;
       (compositeQuad.material as THREE.ShaderMaterial).uniforms.uStrength.value =
-        BLOOM_STRENGTH * (1 + YELL_BLOOM_GAIN * yi);
+        BLOOM_STRENGTH * (1 + YELL_BLOOM_GAIN * yi + RISE_FLASH_GAIN * (1 - riseT));
 
       // 1) 場景 → 透明 baseRT(髮體 straight alpha)
       renderer.setRenderTarget(baseRT);
