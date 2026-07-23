@@ -38,7 +38,8 @@ export const TAPER_EXP = 1.2; // 錐度指數:>1 讓髮尖收得更銳
  */
 export function buildSpike(spec: SpikeSpec, radialSegments = 8, rings = 6): SpikeGeo {
   const { h, bend, r } = spec;
-  const vertexCount = rings * radialSegments + 1; // 環頂點 + 髮尖
+  // 環頂點 + 髮尖 + 底蓋(蓋環重複頂點以取硬邊軸向法線 + 蓋心)
+  const vertexCount = rings * radialSegments + 1 + radialSegments + 1;
   const positions = new Float32Array(vertexCount * 3);
   const normals = new Float32Array(vertexCount * 3);
   const spineT = new Float32Array(vertexCount);
@@ -84,7 +85,7 @@ export function buildSpike(spec: SpikeSpec, radialSegments = 8, rings = 6): Spik
       spineT[v] = t;
     }
   }
-  const tip = vertexCount - 1;
+  const tip = rings * radialSegments;
   const [tipX, tipY] = spine(1);
   const [ttx, tty] = tangent(1);
   positions[tip * 3] = tipX;
@@ -95,8 +96,31 @@ export function buildSpike(spec: SpikeSpec, radialSegments = 8, rings = 6): Spik
   normals[tip * 3 + 2] = 0;
   spineT[tip] = 1;
 
-  // 側面 quad ×2 tris + 尖端扇
-  const indices = new Uint16Array(((rings - 1) * radialSegments * 2 + radialSegments) * 3);
+  // 底蓋:蓋環複製 t=0 環的位置、法線改軸向 +y(遠離髮尖的外側)— 封住髮根,
+  // tilt 翻轉(額前垂髮)時才不會看進管內
+  const capRing = tip + 1;
+  const capCenter = capRing + radialSegments;
+  for (let j = 0; j < radialSegments; j++) {
+    const src = j; // t=0 環
+    const dst = capRing + j;
+    positions[dst * 3] = positions[src * 3];
+    positions[dst * 3 + 1] = positions[src * 3 + 1];
+    positions[dst * 3 + 2] = positions[src * 3 + 2];
+    normals[dst * 3] = 0;
+    normals[dst * 3 + 1] = 1;
+    normals[dst * 3 + 2] = 0;
+    spineT[dst] = 0;
+  }
+  positions[capCenter * 3] = 0;
+  positions[capCenter * 3 + 1] = 0;
+  positions[capCenter * 3 + 2] = 0;
+  normals[capCenter * 3] = 0;
+  normals[capCenter * 3 + 1] = 1;
+  normals[capCenter * 3 + 2] = 0;
+  spineT[capCenter] = 0;
+
+  // 側面 quad ×2 tris + 尖端扇 + 底蓋扇
+  const indices = new Uint16Array(((rings - 1) * radialSegments * 2 + radialSegments * 2) * 3);
   let k = 0;
   for (let i = 0; i < rings - 1; i++) {
     for (let j = 0; j < radialSegments; j++) {
@@ -119,6 +143,12 @@ export function buildSpike(spec: SpikeSpec, radialSegments = 8, rings = 6): Spik
     indices[k++] = b;
     indices[k++] = tip;
   }
+  for (let j = 0; j < radialSegments; j++) {
+    // 蓋扇朝 +y:(center, j+1, j) 的 winding 給出 +y 面法線(有方向測試把關)
+    indices[k++] = capCenter;
+    indices[k++] = capRing + ((j + 1) % radialSegments);
+    indices[k++] = capRing + j;
+  }
   return { positions, normals, spineT, indices };
 }
 
@@ -129,20 +159,26 @@ export interface SpikePlacement extends SpikeSpec {
   tilt: number;
 }
 
-// 髮束配置表(中央高、兩側外掠;bend 與 tilt 同號=往外勾)— 調型改表,不改演算法
+// 髮束配置表 — 調型改表,不改演算法。造型基準:悟空 SSJ1 正面剪影(CONTEXT.md)。
+// 三特徵:額前兩撮垂髮(tilt 翻轉近 π=朝下)、主體往上後方的大尖刺簇(z 負)、
+// 左右不對稱(左側整體偏高、主尖偏左)。bend 與 tilt 同號=往外勾。
 export const SPIKES: SpikePlacement[] = [
   // 後排:略矮、往後收
-  { x: -0.42, h: 0.65, tilt: -0.5, z: -0.13, bend: -0.28, r: 0.13 },
-  { x: -0.14, h: 0.82, tilt: -0.15, z: -0.15, bend: -0.12, r: 0.15 },
-  { x: 0.14, h: 0.8, tilt: 0.15, z: -0.15, bend: 0.12, r: 0.15 },
-  { x: 0.42, h: 0.62, tilt: 0.5, z: -0.13, bend: 0.28, r: 0.13 },
-  // 前排:高、外傾
-  { x: -0.5, h: 0.72, tilt: -0.65, z: 0, bend: -0.35, r: 0.13 },
-  { x: -0.3, h: 1.0, tilt: -0.35, z: 0, bend: -0.25, r: 0.15 },
-  { x: -0.1, h: 1.28, tilt: -0.1, z: 0, bend: -0.15, r: 0.17 },
-  { x: 0.1, h: 1.22, tilt: 0.12, z: 0, bend: 0.16, r: 0.16 },
-  { x: 0.3, h: 0.96, tilt: 0.38, z: 0, bend: 0.27, r: 0.14 },
-  { x: 0.5, h: 0.68, tilt: 0.68, z: 0, bend: 0.36, r: 0.12 },
+  { x: -0.42, h: 0.72, tilt: -0.55, z: -0.13, bend: -0.3, r: 0.13 },
+  { x: -0.14, h: 0.88, tilt: -0.18, z: -0.15, bend: -0.14, r: 0.15 },
+  { x: 0.14, h: 0.78, tilt: 0.2, z: -0.15, bend: 0.14, r: 0.14 },
+  { x: 0.42, h: 0.6, tilt: 0.55, z: -0.13, bend: 0.3, r: 0.12 },
+  // 前排:高、外傾;主尖偏左(x=-0.08)且最高 — 不對稱的錨點
+  { x: -0.5, h: 0.78, tilt: -0.7, z: 0, bend: -0.38, r: 0.13 },
+  { x: -0.3, h: 1.08, tilt: -0.38, z: 0, bend: -0.27, r: 0.15 },
+  { x: -0.08, h: 1.38, tilt: -0.14, z: 0, bend: -0.18, r: 0.17 },
+  { x: 0.12, h: 1.12, tilt: 0.16, z: 0, bend: 0.18, r: 0.15 },
+  { x: 0.3, h: 0.88, tilt: 0.42, z: 0, bend: 0.3, r: 0.13 },
+  { x: 0.5, h: 0.6, tilt: 0.72, z: 0, bend: 0.38, r: 0.11 },
+  // 額前兩撮:短、細,tilt 翻轉過 π/2 → 轉為垂掛。實際方向是圓頂法線+roll 的
+  // 合成(偏側向下、微交叉),且 |tilt|>π/2 後 bend 同號實際往「內」勾 — 以畫面為準
+  { x: -0.15, h: 0.34, tilt: -2.55, z: 0.28, bend: -0.18, r: 0.07 },
+  { x: 0.13, h: 0.3, tilt: 2.6, z: 0.28, bend: 0.16, r: 0.06 },
 ];
 
 // ---- 頭皮圓頂(Scalp Dome):髮根分佈面 ----

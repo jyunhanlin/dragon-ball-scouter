@@ -18,22 +18,25 @@ describe('buildSpike:結構契約', () => {
     for (const i of g.indices) expect(i).toBeLessThan(vertexCount);
   });
 
-  it('拓撲封閉:每條邊最多屬於兩個三角形,唯一開口是髮根環', () => {
-    const radial = 8;
-    const g = buildSpike(SPEC, radial, 4);
+  it('拓撲全封閉:每條邊最多屬於兩個三角形,無開口(髮根有底蓋,任何 tilt 不露管內)', () => {
+    const g = buildSpike(SPEC, 8, 4);
+    // 邊鍵用量化「位置」而非 index:底蓋環為了硬邊法線與側環頂點分離,
+    // 位置重合即視為縫合 — 檢的是幾何水密性,不是 index 共用
+    const posKey = (v: number): string =>
+      `${g.positions[v * 3].toFixed(5)},${g.positions[v * 3 + 1].toFixed(5)},${g.positions[v * 3 + 2].toFixed(5)}`;
     const edgeCount = new Map<string, number>();
     for (let i = 0; i < g.indices.length; i += 3) {
       const tri = [g.indices[i], g.indices[i + 1], g.indices[i + 2]];
       for (let e = 0; e < 3; e++) {
-        const a = tri[e];
-        const b = tri[(e + 1) % 3];
-        const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+        const a = posKey(tri[e]);
+        const b = posKey(tri[(e + 1) % 3]);
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
         edgeCount.set(key, (edgeCount.get(key) ?? 0) + 1);
       }
     }
     for (const n of edgeCount.values()) expect(n).toBeLessThanOrEqual(2);
     const boundaryEdges = [...edgeCount.values()].filter((n) => n === 1).length;
-    expect(boundaryEdges).toBe(radial); // 髮根環的開口邊,其餘全縫合
+    expect(boundaryEdges).toBe(0);
   });
 });
 
@@ -54,13 +57,15 @@ function ringCentroids(g: ReturnType<typeof buildSpike>): { t: number; x: number
 }
 
 describe('buildSpike:脊線', () => {
-  it('spineT 全在 [0,1],髮尖為 1', () => {
+  it('spineT 全在 [0,1],存在唯一 spineT=1 的髮尖', () => {
     const g = buildSpike(SPEC);
+    let tips = 0;
     for (const t of g.spineT) {
       expect(t).toBeGreaterThanOrEqual(0);
       expect(t).toBeLessThanOrEqual(1);
+      if (t === 1) tips += 1;
     }
-    expect(g.spineT[g.spineT.length - 1]).toBe(1);
+    expect(tips).toBe(1);
   });
 
   it('脊線單調:spineT 越大、環中心 y 嚴格越小(往上長)', () => {
@@ -72,7 +77,7 @@ describe('buildSpike:脊線', () => {
 
   it('髮尖落在配置的終點:y=-h、x=bend*h', () => {
     const g = buildSpike(SPEC);
-    const tip = g.spineT.length - 1;
+    const tip = g.spineT.findIndex((t) => t === 1); // 髮尖=spineT 1 的頂點,不依賴佈局
     expect(g.positions[tip * 3 + 1]).toBeCloseTo(-SPEC.h, 5);
     expect(g.positions[tip * 3]).toBeCloseTo(SPEC.bend * SPEC.h, 5);
   });
@@ -162,18 +167,29 @@ describe('buildSpike:法線', () => {
     }
   });
 
-  it('環頂點法線朝外(與「中心→頂點」徑向同側)', () => {
-    const g = buildSpike(SPEC);
+  it('法線朝外:側環徑向同側;底蓋軸向朝 +y 且數量正確(radial+1)', () => {
+    const radial = 8;
+    const g = buildSpike(SPEC, radial);
     const centroids = ringCentroids(g);
-    for (let v = 0; v < g.spineT.length - 1; v++) {
+    let axialCount = 0;
+    for (let v = 0; v < g.spineT.length; v++) {
       const t = g.spineT[v];
-      if (t === 1) continue;
+      if (t === 1) continue; // 髮尖法線=切線方向,另有終點測試
+      const ny = g.normals[v * 3 + 1];
+      if (Math.abs(ny) > 0.9) {
+        expect(ny).toBeGreaterThan(0); // 底蓋:朝 +y(遠離髮尖的外側)
+        axialCount += 1;
+        continue;
+      }
       const c = centroids.find((e) => e.t === t)!;
       const rx = g.positions[v * 3] - c.x;
       const rz = g.positions[v * 3 + 2];
       const dot = g.normals[v * 3] * rx + g.normals[v * 3 + 2] * rz;
       expect(dot).toBeGreaterThan(0);
     }
+    // 若底蓋法線錯給成徑向,會被上面的徑向分支「意外放行」— 用數量守恆堵住:
+    // 軸向頂點必須恰為 蓋環 radial + 蓋心 1
+    expect(axialCount).toBe(radial + 1);
   });
 });
 
