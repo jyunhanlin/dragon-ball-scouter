@@ -18,23 +18,28 @@ import type { FaceFrame } from './types';
 import {
   SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding, measureAspect, type Dome,
 } from './hairgeo';
+import { INERTIA_DAMPING, INERTIA_STIFFNESS, atRest, stepSpring, type Spring3 } from './hairdyn';
 import { coverTransform, toScreen } from './hud';
 
+/** render 的每幀輸入(收攏舊介面的 7 個散裝參數;M2 後續動態只需加欄位) */
+export interface HairRenderInput {
+  frame: FaceFrame | null;
+  ssjMs: number;
+  videoW: number;
+  videoH: number;
+  mirrored: boolean;
+  sw: number;
+  sh: number;
+}
+
 export interface Hair3D {
-  render(
-    frame: FaceFrame | null,
-    ssjMs: number,
-    videoW: number,
-    videoH: number,
-    mirrored: boolean,
-    sw: number,
-    sh: number,
-  ): void;
+  render(input: HairRenderInput): void;
 }
 
 // 髮束配置表(SPIKES)與圓頂/幾何演算法都在 hairgeo.ts(純、受測);這裡只組裝與渲染
 
 // 可調常數(T4 造型調校的旋鈕)
+export const MAX_BEND = 0.35; // 彎曲位移上限(對髮束長的比例):防止極端甩動把髮束拉爛
 export const OUTLINE_SCALE = 1.08;
 export const BLOOM_DOWNSCALE = 4; // 亮部/模糊 RT 對螢幕的縮小倍率
 export const BLOOM_THRESHOLD = 0.55;
@@ -93,6 +98,20 @@ void main() {
   gl_FragColor = vec4(pow(premult, vec3(1.0 / 2.2)), alpha);
 }`;
 
+/**
+ * 把材質改造成可彎曲:注入 spineT 屬性與 uBend uniform,
+ * 頂點沿 uBend 位移、以 spineT² 加權(髮根不動、髮尖全量)— M2 動態的共用基建。
+ * uniform 由呼叫端提供:同一根髮束的髮體與描邊殼共用一顆,彎曲永遠同步。
+ */
+function makeBendable(mat: THREE.Material, uBend: THREE.IUniform<THREE.Vector3>): void {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uBend = uBend;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float spineT;\nuniform vec3 uBend;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += uBend * spineT * spineT;');
+  };
+}
+
 /** 純陣列(hairgeo)→ BufferGeometry;winding 反轉見 hairgeo.flipWinding 的說明 */
 function toBufferGeometry(g: ReturnType<typeof buildSpike>): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
@@ -146,16 +165,28 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   const outlineMat = new THREE.MeshBasicMaterial({ color: 0x241300, side: THREE.BackSide });
 
   const group = new THREE.Group();
-  const pairs: { spike: THREE.Mesh; hull: THREE.Mesh; s: (typeof SPIKES)[number] }[] = [];
+  const pairs: {
+    spike: THREE.Mesh;
+    hull: THREE.Mesh;
+    s: (typeof SPIKES)[number];
+    uBend: THREE.IUniform<THREE.Vector3>;
+    spring: Spring3;
+  }[] = [];
   for (const s of SPIKES) {
     // hairgeo 的局部座標即「髮根在原點、往 -y 長、bend 往 +x 彎」,免旋轉平移
     const geo = toBufferGeometry(buildSpike(s));
-    const spike = new THREE.Mesh(geo, mat);
+    // 材質 clone:uBend 是 per-髮束狀態;shader 原始碼相同 → program 仍共用
+    const uBend: THREE.IUniform<THREE.Vector3> = { value: new THREE.Vector3() };
+    const spikeMat = mat.clone();
+    const hullMat = outlineMat.clone();
+    makeBendable(spikeMat, uBend);
+    makeBendable(hullMat, uBend);
+    const spike = new THREE.Mesh(geo, spikeMat);
     // inverted hull 描邊:同幾何放大、背面、深色
-    const hull = new THREE.Mesh(geo, outlineMat);
+    const hull = new THREE.Mesh(geo, hullMat);
     hull.scale.setScalar(OUTLINE_SCALE);
     group.add(hull, spike);
-    pairs.push({ spike, hull, s });
+    pairs.push({ spike, hull, s, uBend, spring: atRest(0, 0, 0) });
   }
   group.visible = false;
   scene.add(group);
@@ -216,11 +247,18 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   let shown = false;
   let lastSsjMs = Infinity;
   let domeReady = false;
+  let springsSeeded = false;
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
+  const tipWorld = new THREE.Vector3();
+  const bendV = new THREE.Vector3();
+  const invQ = new THREE.Quaternion();
 
   return {
-    render(frame, ssjMs, videoW, videoH, mirrored, sw, sh) {
+    render(input) {
+      const { frame, ssjMs, videoW, videoH, mirrored, sw, sh } = input;
+      // 臉短暫丟失時 render 不會被呼叫:重現那一幀的 dt 是整段空窗(受 MAX_SIM_MS
+      // 封頂),彈簧一次收斂 — 若頭在空窗中移動,重現時會有一下大甩動,屬接受的行為
       const active = ssjMs > 0 && frame?.pose !== undefined && videoW > 0;
       if (!active) {
         if (shown) {
@@ -249,8 +287,13 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
         camera.updateProjectionMatrix();
       }
 
-      // 每次變身的第一幀量測臉部比例、擬合圓頂並擺放髮根(之後凍結,轉頭不重算)
-      if (ssjMs < lastSsjMs) domeReady = false;
+      // 每次變身的第一幀量測臉部比例、擬合圓頂並擺放髮根(之後凍結,轉頭不重算)。
+      // dt 由 ssjMs 差分而得 — 與 fsm/偵測共用同一顆 performance.now 時鐘
+      const dtMs = ssjMs < lastSsjMs ? 0 : ssjMs - lastSsjMs;
+      if (ssjMs < lastSsjMs) {
+        domeReady = false;
+        springsSeeded = false;
+      }
       lastSsjMs = ssjMs;
       if (!domeReady) {
         placeSpikes(fitDome(measureAspect(frame.points)));
@@ -272,6 +315,24 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
       const faceW = frame.box.w * t.scale; // 臉寬(螢幕像素)= 髮束的基準尺度
       group.scale.set(faceW, faceW * eased, faceW);
       group.visible = true;
+
+      // 慣性甩動:每束一顆彈簧追剛體髮尖的世界座標,彈簧與剛體的差
+      // 反轉回髮束局部(臉寬單位)後餵給 uBend(spineT² 加權 → 尖端甩、根不動)
+      group.updateMatrixWorld(true);
+      for (const p of pairs) {
+        tipWorld.set(p.s.bend * p.s.h, -p.s.h, 0).applyMatrix4(p.spike.matrixWorld);
+        if (!springsSeeded) p.spring = atRest(tipWorld.x, tipWorld.y, tipWorld.z);
+        // 長髮束較軟(stiffness ∝ 1/h)→ 甩動幅度隨長度自然分層
+        p.spring = stepSpring(p.spring, tipWorld, dtMs, INERTIA_STIFFNESS / p.s.h, INERTIA_DAMPING);
+        bendV.set(p.spring.x - tipWorld.x, p.spring.y - tipWorld.y, p.spring.z - tipWorld.z);
+        // 世界 → 髮束局部:反施加旋轉、除以臉寬(grow 期間 y 縮放略有近似誤差,可忽略)
+        invQ.copy(group.quaternion).multiply(p.spike.quaternion).invert();
+        bendV.applyQuaternion(invQ).divideScalar(faceW);
+        const maxB = MAX_BEND * p.s.h;
+        if (bendV.length() > maxB) bendV.setLength(maxB);
+        p.uBend.value.copy(bendV);
+      }
+      springsSeeded = true;
 
       // 1) 場景 → 透明 baseRT(髮體 straight alpha)
       renderer.setRenderTarget(baseRT);

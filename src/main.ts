@@ -303,17 +303,25 @@ function loop(): void {
     // 假 frame 用螢幕尺寸當 video 尺寸（coverTransform 成恆等），不依賴相機
     const sw = canvas.clientWidth;
     const sh = canvas.clientHeight;
-    hair3d?.render(fakeFace(sw, sh, now), now, sw, sh, false, sw, sh);
+    hair3d?.render({
+      frame: fakeFace(sw, sh, now),
+      ssjMs: now,
+      videoW: sw,
+      videoH: sh,
+      mirrored: false,
+      sw,
+      sh,
+    });
   } else {
-    hair3d?.render(
-      transformed ? frame : null,
-      transformed ? now - ssjAt : 0,
-      video.videoWidth,
-      video.videoHeight,
-      facing === 'user',
-      canvas.clientWidth,
-      canvas.clientHeight,
-    );
+    hair3d?.render({
+      frame: transformed ? frame : null,
+      ssjMs: transformed ? now - ssjAt : 0,
+      videoW: video.videoWidth,
+      videoH: video.videoHeight,
+      mirrored: facing === 'user',
+      sw: canvas.clientWidth,
+      sh: canvas.clientHeight,
+    });
   }
 
   if (debugEl) {

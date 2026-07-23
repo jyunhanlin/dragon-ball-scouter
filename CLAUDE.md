@@ -29,7 +29,7 @@ camera.ts (getUserMedia stream)
   → hud.ts (coverTransform/toScreen mapping + Hud canvas drawing) + sfx.ts (WebAudio beeps)
 ```
 
-**Purity split (drives what's testable):** `power.ts`, `fsm.ts`, `hairgeo.ts`, and the transform functions in `hud.ts` are pure — no browser APIs — and are the only unit-tested code. `camera.ts`, `detector.ts`, `sfx.ts`, `hair3d.ts`, and the `Hud` class are browser-bound and verified manually in a real browser (camera permission can't be automated). `hairgeo.ts` outputs plain arrays (no three import); `hair3d.ts` only assembles them into BufferGeometry.
+**Purity split (drives what's testable):** `power.ts`, `fsm.ts`, `hairgeo.ts`, `hairdyn.ts`, and the transform functions in `hud.ts` are pure — no browser APIs — and are the only unit-tested code. `camera.ts`, `detector.ts`, `sfx.ts`, `hair3d.ts`, and the `Hud` class are browser-bound and verified manually in a real browser (camera permission can't be automated). `hairgeo.ts` outputs plain arrays (no three import); `hair3d.ts` only assembles them into BufferGeometry.
 
 ## Invariants that span files
 
