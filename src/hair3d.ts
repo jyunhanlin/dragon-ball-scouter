@@ -15,6 +15,7 @@
  */
 import * as THREE from 'three';
 import type { FaceFrame } from './types';
+import { buildSpike, flipWinding } from './hairgeo';
 import { coverTransform, toScreen } from './hud';
 
 export interface Hair3D {
@@ -29,20 +30,21 @@ export interface Hair3D {
   ): void;
 }
 
-// 髮束配置:x/z 為臉寬單位、h 為髮束長、tilt 為外傾角(中央高、兩側外掠)
+// 髮束配置:x/z 為臉寬單位、h 為髮束長、tilt 為外傾角(中央高、兩側外掠)、
+// bend 為彎曲量(與 tilt 同號=往外勾,髮束帶弧度而非直挺)、r 為髮根半徑
 const SPIKES = [
   // 後排:略矮、往後收
-  { x: -0.42, h: 0.65, tilt: -0.5, z: -0.13 },
-  { x: -0.14, h: 0.82, tilt: -0.15, z: -0.15 },
-  { x: 0.14, h: 0.8, tilt: 0.15, z: -0.15 },
-  { x: 0.42, h: 0.62, tilt: 0.5, z: -0.13 },
+  { x: -0.42, h: 0.65, tilt: -0.5, z: -0.13, bend: -0.28, r: 0.13 },
+  { x: -0.14, h: 0.82, tilt: -0.15, z: -0.15, bend: -0.12, r: 0.15 },
+  { x: 0.14, h: 0.8, tilt: 0.15, z: -0.15, bend: 0.12, r: 0.15 },
+  { x: 0.42, h: 0.62, tilt: 0.5, z: -0.13, bend: 0.28, r: 0.13 },
   // 前排:高、外傾
-  { x: -0.5, h: 0.72, tilt: -0.65, z: 0 },
-  { x: -0.3, h: 1.0, tilt: -0.35, z: 0 },
-  { x: -0.1, h: 1.28, tilt: -0.1, z: 0 },
-  { x: 0.1, h: 1.22, tilt: 0.12, z: 0 },
-  { x: 0.3, h: 0.96, tilt: 0.38, z: 0 },
-  { x: 0.5, h: 0.68, tilt: 0.68, z: 0 },
+  { x: -0.5, h: 0.72, tilt: -0.65, z: 0, bend: -0.35, r: 0.13 },
+  { x: -0.3, h: 1.0, tilt: -0.35, z: 0, bend: -0.25, r: 0.15 },
+  { x: -0.1, h: 1.28, tilt: -0.1, z: 0, bend: -0.15, r: 0.17 },
+  { x: 0.1, h: 1.22, tilt: 0.12, z: 0, bend: 0.16, r: 0.16 },
+  { x: 0.3, h: 0.96, tilt: 0.38, z: 0, bend: 0.27, r: 0.14 },
+  { x: 0.5, h: 0.68, tilt: 0.68, z: 0, bend: 0.36, r: 0.12 },
 ];
 
 // 可調常數(T4 造型調校的旋鈕)
@@ -104,20 +106,13 @@ void main() {
   gl_FragColor = vec4(pow(premult, vec3(1.0 / 2.2)), alpha);
 }`;
 
-/**
- * y-down 正交投影(top=0,bottom=sh)是鏡像投影,螢幕上三角形 winding 全面反轉。
- * three 只會替「物件矩陣」的負行列式自動補償 frontFace(group 的 z 負縮放實測被
- * 抵銷),不會替投影矩陣補償。補償點只有一個:幾何 index 反向、法線保持原樣,
- * FrontSide/BackSide 語義即恢復正常(側身 side 交換會走到 -vNormal 分支,不要用)。
- */
-function flipWinding(geo: THREE.BufferGeometry): THREE.BufferGeometry {
-  const idx = geo.getIndex()!;
-  for (let i = 0; i < idx.count; i += 3) {
-    const b = idx.getX(i + 1);
-    const c = idx.getX(i + 2);
-    idx.setX(i + 1, c);
-    idx.setX(i + 2, b);
-  }
+/** 純陣列(hairgeo)→ BufferGeometry;winding 反轉見 hairgeo.flipWinding 的說明 */
+function toBufferGeometry(g: ReturnType<typeof buildSpike>): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(g.positions, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(g.normals, 3));
+  geo.setAttribute('spineT', new THREE.BufferAttribute(g.spineT, 1)); // M2 彎曲的鉤子
+  geo.setIndex(new THREE.BufferAttribute(flipWinding(g.indices), 1));
   return geo;
 }
 
@@ -165,9 +160,8 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
 
   const group = new THREE.Group();
   for (const s of SPIKES) {
-    const geo = flipWinding(new THREE.ConeGeometry(0.15, s.h, 8));
-    geo.rotateX(Math.PI); // 髮束尖端朝 -y(y-down 螢幕座標的上方)
-    geo.translate(0, -s.h / 2, 0); // 髮根對齊自身原點,往上長
+    // hairgeo 的局部座標即「髮根在原點、往 -y 長、bend 往 +x 彎」,免旋轉平移
+    const geo = toBufferGeometry(buildSpike(s));
     const spike = new THREE.Mesh(geo, mat);
     spike.position.set(s.x, -0.5, s.z); // 髮根提到頭頂上緣(pivot 在鼻樑)
     spike.rotation.z = -s.tilt;
