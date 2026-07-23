@@ -8,10 +8,13 @@ import {
   smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT, OVER_LIMIT,
 } from './power';
 import { initial, start, tick, type FsmState } from './fsm';
+import { createTint, TINT_INTERVAL_MS, type TintLayer } from './tint';
 import { Hud, coverTransform, toScreen, type Box } from './hud';
 import { initAudio, playLock, playTick, playOverload, playChargeTick, playTransform } from './sfx';
 
 const video = document.querySelector<HTMLVideoElement>('#cam')!;
+const tintCanvas = document.querySelector<HTMLCanvasElement>('#tint')!;
+const tintCtx = tintCanvas.getContext('2d')!;
 const canvas = document.querySelector<HTMLCanvasElement>('#hud')!;
 const startOverlay = document.querySelector<HTMLDivElement>('#start-overlay')!;
 const startBtn = document.querySelector<HTMLButtonElement>('#start-btn')!;
@@ -38,6 +41,9 @@ const debugEl = urlParams.has('debug')
 const hairDebug = urlParams.has('hair');
 const HAIR_CYCLE_MS = 4000; // ?hair 的 ssjMs 循環長度：豎起演出每輪重播
 if (hairDebug) startOverlay.hidden = true;
+
+// ?tint 免變身強制染金（仍需相機）：金色調校與並排比對用，不用每次吼到變身
+const tintDebug = urlParams.has('tint');
 
 function fakeFace(sw: number, sh: number, now: number): import('./types').FaceFrame {
   // 稀疏陣列：只填 hair3d 實際讀的 landmark（168 鼻樑、10 額頂、234/454 兩頰）。
@@ -80,6 +86,10 @@ let fpsAt = performance.now();
 let fps = 0;
 let ssjAt = 0;                // 變身時間戳（0=未變身）；overload 期間沿用，回搜尋才歸零
 
+let lastTintAt = 0;           // 染金分割節流（20Hz，見 TINT_INTERVAL_MS）
+let tintImg: HTMLCanvasElement | null = null; // 最近一次分割產出的金髮圖層（節流間隔沿用）
+let tintMs = 0;               // debug 用：最近一次頭髮分割耗時
+
 function showError(msg: string): void {
   errorMsg.textContent = msg;
   errorBox.hidden = false;
@@ -96,6 +106,8 @@ function pause(ms: number): Promise<void> {
 let detectorPromise: Promise<Detector>;
 let preloadFailed = false;
 let hair3d: Hair3D | null = null; // 3D 刺蝟頭層（非致命：載不到就 SKIP，變身時只少頭髮）
+
+let tintLayer: TintLayer | null = null; // 染金分割（非致命：載不到就 SKIP，變身時只少染金）
 
 type StepResult = 'ok' | 'skip' | 'fail';
 
@@ -121,10 +133,18 @@ function initPreload(): void {
       .catch(() => 'skip' as const);
   }
 
+  let tintWait: Promise<StepResult> = Promise.resolve('ok');
+  if (!tintLayer) {
+    const tp = createTint();
+    tp.then((t) => { tintLayer = t; }).catch(() => {});
+    tintWait = tp.then(() => 'ok' as const, () => 'skip' as const);
+  }
+
   void runBootLog([
     ['> COMBAT MODULE .........', orFail(stages.wasm)],
     ['> TARGET DATABASE .......', orFail(stages.model)],
     ['> SAIYAN HAIR ...........', hairWait],
+    ['> HAIR DYE MODULE .......', tintWait],
     ['> CALIBRATING SENSOR ....', orFail(stages.warmup)],
   ]);
 }
@@ -182,6 +202,8 @@ async function boot(): Promise<void> {
       cam = await startCamera(video, facing);
       facing = cam.facing;
       video.classList.toggle('mirrored', facing === 'user');
+      // 染金層與 #cam 同一 .mirrored class 同處切換：鏡像鏈不變量，單邊改動會漂移
+      tintCanvas.classList.toggle('mirrored', facing === 'user');
     } catch {
       showError('相機權限被拒或無法開啟鏡頭，請允許相機權限後重試');
       return;
@@ -257,6 +279,25 @@ function onTransition(prev: FsmState['phase'], next: FsmState['phase']): void {
   }
 }
 
+// 金髮圖層（video 像素空間）→ 螢幕：與 #cam 同一 cover 映射；前鏡頭鏡像交給
+// CSS .mirrored（與 #cam 同 class、boot 同處切換）。尺寸用圖層自身寬高而非
+// video.videoWidth：鏡頭切換瞬間兩者可能不同步，跟著快取圖層走才不會拉伸
+function drawTint(img: HTMLCanvasElement | null): void {
+  if (tintCanvas.hidden) tintCanvas.hidden = false;
+  const cw = tintCanvas.clientWidth;
+  const ch = tintCanvas.clientHeight;
+  if (tintCanvas.width !== cw || tintCanvas.height !== ch) {
+    tintCanvas.width = cw;
+    tintCanvas.height = ch;
+  }
+  tintCtx.setTransform(1, 0, 0, 1, 0, 0);
+  tintCtx.clearRect(0, 0, cw, ch);
+  if (!img) return;
+  const t = coverTransform(img.width, img.height, cw, ch);
+  tintCtx.setTransform(t.scale, 0, 0, t.scale, t.dx, t.dy);
+  tintCtx.drawImage(img, 0, 0);
+}
+
 function loop(): void {
   requestAnimationFrame(loop);
   const now = performance.now();
@@ -330,6 +371,21 @@ function loop(): void {
     });
   }
 
+  // 染金：變身期間把真髮遮罩調成金色（?tint 免變身強制開，調校用）。分割 20Hz 節流，
+  // 間隔內沿用上一張金髮圖層；非變身時藏層+清快取，零推論負擔
+  if ((transformed || tintDebug) && tintLayer && video.readyState >= 2) {
+    if (now - lastTintAt >= TINT_INTERVAL_MS) {
+      lastTintAt = now;
+      const t0 = performance.now();
+      tintImg = tintLayer.render(video, now);
+      tintMs = performance.now() - t0;
+    }
+    drawTint(tintImg);
+  } else if (!tintCanvas.hidden) {
+    tintCanvas.hidden = true;
+    tintImg = null;
+  }
+
   if (debugEl) {
     const jaw = frame?.blend.jawOpen ?? 0;
     const brow = ((frame?.blend.browDownLeft ?? 0) + (frame?.blend.browDownRight ?? 0)) / 2;
@@ -340,6 +396,7 @@ function loop(): void {
       `effort  ${eff.toFixed(2)} (need ≥ ${SSJ_EFFORT.toFixed(2)})\n` +
       `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
       `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}\n` +
+      `tint    ${tintLayer ? 'ready' : 'off'}  seg ${tintMs.toFixed(1)}ms\n` +
       `fps     ${fps.toFixed(0)}  hair3d ${hair3d ? 'ready' : 'off'}`;
   }
 

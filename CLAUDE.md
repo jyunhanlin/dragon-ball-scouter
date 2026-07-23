@@ -16,7 +16,7 @@ Deploy: push to `main` → GitHub Actions runs test + build → GitHub Pages at 
 
 ## Architecture
 
-Browser-only toy (no backend): camera frames → face detection → "power level" math → canvas HUD. One `requestAnimationFrame` loop in `main.ts` is the only place modules meet; every other file is a leaf with no cross-imports except types.
+Browser-only toy (no backend): camera frames → face detection → "power level" math → canvas HUD. One `requestAnimationFrame` loop in `main.ts` is the only place modules meet; every other file is a leaf with no cross-imports except types and two sanctioned value imports: `hair3d.ts` pulls pure helpers (`hairgeo`/`hairdyn`/`hud` transforms), and `tint.ts` (like `detector.ts`) uses the shared `WASM_URL` so the MediaPipe lockstep stays one definition.
 
 Per-frame pipeline:
 
@@ -27,17 +27,22 @@ camera.ts (getUserMedia stream)
   → power.ts (geometry ratios → stable base power; blendshapes → boost ×1–10)
   → fsm.ts (idle→searching→locked→scanning→result→overload, face-lost debounce)
   → hud.ts (coverTransform/toScreen mapping + Hud canvas drawing) + sfx.ts (WebAudio beeps)
+
+(while transformed only)
+  tint.ts (MediaPipe hair segmentation → gold-tinted real hair on #tint canvas, 20Hz)
+  hair3d.ts (three.js spike layer, drawn above #tint)
 ```
 
-**Purity split (drives what's testable):** `power.ts`, `fsm.ts`, `hairgeo.ts`, `hairdyn.ts`, and the transform functions in `hud.ts` are pure — no browser APIs — and are the only unit-tested code. `camera.ts`, `detector.ts`, `sfx.ts`, `hair3d.ts`, and the `Hud` class are browser-bound and verified manually in a real browser (camera permission can't be automated). `hairgeo.ts` outputs plain arrays (no three import); `hair3d.ts` only assembles them into BufferGeometry.
+**Purity split (drives what's testable):** `power.ts`, `fsm.ts`, `hairgeo.ts`, `hairdyn.ts`, and the transform functions in `hud.ts` are pure — no browser APIs — and are the only unit-tested code. `camera.ts`, `detector.ts`, `sfx.ts`, `hair3d.ts`, `tint.ts`, and the `Hud` class are browser-bound and verified manually in a real browser (camera permission can't be automated). `hairgeo.ts` outputs plain arrays (no three import); `hair3d.ts` only assembles them into BufferGeometry.
 
 ## Invariants that span files
 
 - **One clock:** `performance.now()` (ms) feeds both `fsm.tick` timestamps and `detectForVideo`. Don't introduce `Date.now()` or seconds anywhere in that chain.
 - **Pixel space, not normalized:** `detector.ts` multiplies landmarks by `videoWidth/videoHeight` before anything else sees them, so `computeRatios`' mixed horizontal/vertical ratios are aspect-correct. Landmark indices in `power.ts` (33/263/234/454/168/1/10/152/61/291) are MediaPipe FaceLandmarker canonical points.
-- **Mirroring chain:** `facing === 'user'` drives both the CSS `scaleX(-1)` on `#cam` and the x-flip in `toScreen`; box reconstruction in `main.ts` uses `min/abs` because mirroring reverses corner order. Change one side and the reticle drifts off the face.
+- **Mirroring chain:** `facing === 'user'` drives the CSS `scaleX(-1)` on `#cam` and `#tint` (same `.mirrored` class, toggled at the same site in `boot()`) and the x-flip in `toScreen`; box reconstruction in `main.ts` uses `min/abs` because mirroring reverses corner order. Change one side and the reticle drifts off the face.
 - **MediaPipe versions move in lockstep:** `package.json` pins `@mediapipe/tasks-vision` exactly, and `WASM_URL` in `detector.ts` hardcodes the same version on the CDN. Bump both together or the JS loader and WASM runtime skew.
 - **The 3D hair layer (`hair3d.ts`, three.js) is garnish, not core:** it loads as a lazy chunk during the boot screen (non-fatal — boot line shows SKIP if WebGL/chunk fails) and renders ONLY while transformed (`display:none` + no render otherwise). It draws on its own transparent canvas between the video and the HUD canvas, composited alpha-over (ADR-0001): the hair body is opaque and CAN darken/occlude what's under it (outlines, cel shadow tones), while the bloom glow is added in the final composite shader (premultiplied rgb > alpha) — approximately screen-like, though not exact: a saturated glow attenuates background channels it doesn't emit in by the luminance fraction. Single WebGL context; custom threshold+blur bloom chain at 1/4 resolution; renderer pinned to `pixelRatio 1` on purpose. Check `?debug`'s fps line before making it heavier. `?hair` renders the hair without camera/transformation (hides the start overlay) for pipeline checks and silhouette tuning.
+- **The gold-tint layer (`tint.ts`) draws on `#tint`, statically placed between `#cam` and `#hud`** — hair3d inserts its canvas before `#hud`, so the stack is cam < tint < hair3d < hud and the spikes overlay the tinted real hair. Resurrected from the proven 2D-pipeline segmenter (`git show 9e62470^:src/segmenter.ts`). Segmentation runs only while transformed, throttled to 20Hz (`TINT_INTERVAL_MS`); non-fatal boot line `HAIR DYE MODULE` SKIPs like the hair chunk; `?tint` forces it on without transforming (tuning mode, same idea as `?hair` but still needs the camera). Tint knobs (`TINT_FILTER`/`TINT_FALLBACK`) live at the top of `tint.ts`.
 - **The hair layer's y-down ortho projection is a mirrored projection** — triangle winding is flipped on screen and three.js does NOT compensate for projection-level mirroring (only object-matrix handedness). All hair geometry must go through `flipWinding` (in `hairgeo.ts`, pure & unit-tested: reversed indices, original normals) or Front/BackSide semantics silently invert.
 - **Head-pose quaternion axis flips in `hair3d.ts` are paper-derived**, not device-verified — if hair rotates opposite to the head, fix the sign pattern in the `group.quaternion.set` calls, nothing else.
 - **Manual `start()` bypasses `onTransition`:** the restart button handler in `main.ts` must mirror `onTransition`'s searching-entry branch (see comment there). Side effects added to one must be added to the other.

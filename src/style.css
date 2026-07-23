@@ -8,6 +8,8 @@ body {
 }
 #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 #cam.mirrored { transform: scaleX(-1); }
+#tint { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#tint.mirrored { transform: scaleX(-1); }
 #hud { position: fixed; inset: 0; width: 100%; height: 100%; }
 #start-overlay, #error-box {
   position: fixed; inset: 0; z-index: 10;
@@ -22,7 +24,7 @@ button {
 button:active { background: rgba(125, 255, 158, 0.2); }
 button:disabled { opacity: 0.35; cursor: default; }
 #boot-log {
-  min-height: 9em; /* 6 行 × 1.5 行高：逐行出現時按鈕不跳動 */
+  min-height: 10.5em; /* 7 行 × 1.5 行高：逐行出現時按鈕不跳動 */
   text-align: left;
   font-size: 14px;
   line-height: 1.5;
