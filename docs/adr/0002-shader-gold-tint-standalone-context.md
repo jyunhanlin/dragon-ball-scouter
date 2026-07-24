@@ -1,6 +1,6 @@
 # 染金改走獨立 WebGL context 的 shader 保光染色
 
-T8 的染金(復刻舊 2D 管線:categoryMask 硬遮罩 + sepia 濾鏡鏈)實機檢視有兩個痕點:金色像貼紙(sepia 把髮絲明暗壓成單一色調)、髮際線硬邊(二值遮罩)。目標定為 IG 染髮濾鏡質感(grill 定案;蓋髮/金髮盔方案維持否決,見 CONTEXT.md「染金」條目)。決定把染色搬進 fragment shader:confidenceMasks + smoothstep 軟遮罩、亮度驅動 shadowGold→highlightGold 雙色 ramp,在 `#tint` canvas 自開獨立輕量 raw WebGL context(不引 three.js)。這是 #1 預留的「video 需要進 texture」管線改動的落地。
+T8 的染金(復刻舊 2D 管線:categoryMask 硬遮罩 + sepia 濾鏡鏈)實機檢視有兩個痕點:金色像貼紙(sepia 把髮絲明暗壓成單一色調)、髮際線硬邊(二值遮罩)。目標定為 IG 染髮濾鏡質感(grill 定案;蓋髮/金髮盔方案維持否決,見 CONTEXT.md「染金」條目)。決定把染色搬進 fragment shader:confidenceMasks + smoothstep 軟遮罩、亮度驅動 shadowGold→highlightGold 雙色 ramp,由 tint.ts 內部以離屏 canvas 自開獨立輕量 raw WebGL context(不引 three.js;`#tint` 已持有 2D context,同一 canvas 拿不到第二種 context——shader 輸出仍是 video 像素空間圖層,與 2D 降級共用同一條顯示路徑,main.ts 無感)。這是 #1 預留的「video 需要進 texture」管線改動的落地。
 
 Status: accepted
 

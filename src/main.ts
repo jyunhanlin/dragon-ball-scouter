@@ -396,7 +396,7 @@ function loop(): void {
       `effort  ${eff.toFixed(2)} (need ≥ ${SSJ_EFFORT.toFixed(2)})\n` +
       `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
       `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}\n` +
-      `tint    ${tintLayer ? 'ready' : 'off'}  seg ${tintMs.toFixed(1)}ms\n` +
+      `tint    ${tintLayer ? `ready(${tintLayer.mode})` : 'off'}  seg ${tintMs.toFixed(1)}ms\n` +
       `fps     ${fps.toFixed(0)}  hair3d ${hair3d ? 'ready' : 'off'}`;
   }
 
