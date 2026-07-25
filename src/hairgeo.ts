@@ -159,7 +159,7 @@ export interface SpikePlacement extends SpikeSpec {
   tilt: number;
 }
 
-// 髮束配置表 — 調型改表,不改演算法。造型基準:悟空 SSJ1 正面剪影(CONTEXT.md)。
+// 髮束配置表 — 調型改表,不改演算法。仲裁看造型基準的剪影面向(CONTEXT.md)。
 // 三特徵:額前兩撮垂髮(tilt 翻轉近 π=朝下)、主體往上後方的大尖刺簇(z 負)、
 // 左右不對稱(左側整體偏高、主尖偏左)。bend 與 tilt 同號=往外勾。
 export const SPIKES: SpikePlacement[] = [
