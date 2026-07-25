@@ -1,7 +1,8 @@
 /**
  * 超賽 3D 刺蝟頭:three.js 特效層,疊在 video 與 2D HUD canvas 之間。
  *
- * - 只在變身期間渲染(其餘時間 display:none + 不進 render loop,零成本)
+ * - 只在變身期間渲染,或被 main.ts 的調參旗標(?hair/?tint)強制開
+ *   (其餘時間 display:none + 不進 render loop,零成本)
  * - 合成走 alpha-over(ADR-0001):髮體不透明、可畫暗部與描邊;bloom 光暈在
  *   最終 composite shader 內以加色疊上(premultiplied:rgb 可超出 alpha,
  *   光暈行為等同舊 screen blend)。單一 WebGL context,無 EffectComposer。
@@ -66,6 +67,22 @@ export const YELL_SMOOTH_MS = 150; // yi 一階低通時間常數:blendshape 逐
 export const RIM_COLOR = 0xfff2c8;
 export const RIM_STRENGTH = 0.22; // 0.4 洗白色階(疊 bloom 後全域過曝),減半後暗部才活著
 export const RIM_POWER = 3.2; // 越大 rim 越貼邊
+// 賽璐璐上色(T9 染金調校的旋鈕:改髮束金色動這裡,不動渲染管線)。
+// ⚠ 這裡的金與 tint.ts 的 TINT_*_GOLD 不在同一個色彩空間(本層還要過線性轉換、量化
+// 色帶、bloom 與 composite 的 pow(1/2.2),tint 的雙金則是 sRGB 直出),同一組 RGB 在
+// 兩層是兩種螢幕顏色 —— 不可統一成共用常數,只能開 ?tint 兩層並排、對造型基準的
+// 顏色面向仲裁。完整理由與被否決的方案見 docs/adr/0003-no-shared-gold-constant.md
+export const CEL_GOLD = 0xffd75e; // 髮體主色
+export const CEL_EMISSIVE = 0xffaa00; // 自發光:金光的色相來源,強度見 EMISSIVE_BASE
+export const CEL_BANDS = [72, 172, 255]; // 3 階色帶(暗部/中間調/亮部)的階值
+export const CEL_AMBIENT_COLOR = 0xffffff; // 環境光色:染暖會整頭偏黃(含暗部),與只動 CEL_GOLD 不同
+export const CEL_AMBIENT = 0.55; // 環境光強度:拉高會抬暗部、壓平色階對比
+export const CEL_KEY_COLOR = 0xfff2c0; // 主光色(偏暖):與 CEL_GOLD 相乘後才是實際亮部
+export const CEL_KEY_INTENSITY = 1.1;
+// 主光方向(y-down 螢幕空間):決定 3 階色帶的分界落在頭的哪裡 —— 色帶是量化的,
+// 挪動這個向量會整塊改變「多少面積讀成暗部 vs 亮部」,是實打實的金色旋鈕而非幾何設定
+export const CEL_KEY_DIR: [number, number, number] = [0.3, -1, 1.5];
+export const OUTLINE_COLOR = 0x241300; // 描邊色(深褐而非純黑:純黑在暗部會糊成一團)
 
 const QUAD_VERT = /* glsl */ `
 varying vec2 vUv;
@@ -191,25 +208,25 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
 
   const scene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(0, 1, 0, 1, -2000, 2000);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const key = new THREE.DirectionalLight(0xfff2c0, 1.1);
-  key.position.set(0.3, -1, 1.5);
+  scene.add(new THREE.AmbientLight(CEL_AMBIENT_COLOR, CEL_AMBIENT));
+  const key = new THREE.DirectionalLight(CEL_KEY_COLOR, CEL_KEY_INTENSITY);
+  key.position.set(...CEL_KEY_DIR);
   scene.add(key);
 
   // 3 階賽璐璐色帶:暗部/中間調/亮部(T4 定案;T1 曾以 2 階驗證「畫得出暗部」)
-  const grades = new Uint8Array([72, 172, 255]);
+  const grades = new Uint8Array(CEL_BANDS);
   const gradientMap = new THREE.DataTexture(grades, grades.length, 1, THREE.RedFormat);
   gradientMap.minFilter = THREE.NearestFilter;
   gradientMap.magFilter = THREE.NearestFilter;
   gradientMap.needsUpdate = true;
 
   const mat = new THREE.MeshToonMaterial({
-    color: 0xffd75e,
+    color: CEL_GOLD,
     gradientMap,
-    emissive: 0xffaa00,
+    emissive: CEL_EMISSIVE,
     emissiveIntensity: EMISSIVE_BASE,
   });
-  const outlineMat = new THREE.MeshBasicMaterial({ color: 0x241300, side: THREE.BackSide });
+  const outlineMat = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide });
 
   const group = new THREE.Group();
   const pairs: {

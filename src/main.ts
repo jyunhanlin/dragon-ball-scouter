@@ -42,7 +42,7 @@ const hairDebug = urlParams.has('hair');
 const HAIR_CYCLE_MS = 4000; // ?hair 的 ssjMs 循環長度：豎起演出每輪重播
 if (hairDebug) startOverlay.hidden = true;
 
-// ?tint 免變身強制染金（仍需相機）：金色調校與並排比對用，不用每次吼到變身
+// ?tint 免變身強制染金＋髮束（仍需相機）：染金與髮束的金色並排仲裁用，不用每次吼到變身
 const tintDebug = urlParams.has('tint');
 
 function fakeFace(sw: number, sh: number, now: number): import('./types').FaceFrame {
@@ -340,8 +340,10 @@ function loop(): void {
     display = ssjClimb(ssjStartValue, now - state.phaseAt);
   }
 
-  // 3D 刺蝟頭只在變身期間渲染（模組內部處理 display/skip，平時零成本）
+  // 3D 刺蝟頭只在變身期間渲染，或被調參旗標強制開（模組內部處理 display/skip，平時零成本）
   const transformed = ssjAt > 0;
+  // 染金與髮束同一個開關：兩層是同一場並排仲裁，永遠一起出現、一起消失
+  const hairLive = transformed || tintDebug;
   if (hairDebug) {
     // 假 frame 用螢幕尺寸當 video 尺寸（coverTransform 成恆等），不依賴相機
     const sw = canvas.clientWidth;
@@ -359,9 +361,15 @@ function loop(): void {
       effort: EFFORT_FULL * (0.5 + 0.5 * Math.sin(now / 1200)),
     });
   } else {
+    // ?tint 一併開髮束:染金調校的仲裁是「真髮金 vs 髮束賽璐璐金」並排比對,兩層必須
+    // 同時在同一張臉上,否則每調一次色都要吼到變身。未變身時 ssjMs 給 now(遠超
+    // RISE_MS)→ 豎起演出視為早已收斂,比對到的是穩態金色而不是 RISE_FLASH_GAIN 的爆閃。
+    // 副作用(僅 ?tint):真的變身結束時 ssjMs 會從小值跳回 now,hair3d 只在 ssjMs 變小時
+    // 重置,所以那一幀吃到 ssjAt 大小的 dt —— 由 hairdyn 的 MAX_SIM_MS(2000)封頂,
+    // 彈簧一次收斂,視覺上 snap 一下。調參模式限定,不修
     hair3d?.render({
-      frame: transformed ? frame : null,
-      ssjMs: transformed ? now - ssjAt : 0,
+      frame: hairLive ? frame : null,
+      ssjMs: transformed ? now - ssjAt : tintDebug ? now : 0,
       videoW: video.videoWidth,
       videoH: video.videoHeight,
       mirrored: facing === 'user',
@@ -372,8 +380,9 @@ function loop(): void {
   }
 
   // 染金：變身期間把真髮遮罩調成金色（?tint 免變身強制開，調校用）。分割 20Hz 節流，
-  // 間隔內沿用上一張金髮圖層；非變身時藏層+清快取，零推論負擔
-  if ((transformed || tintDebug) && tintLayer && video.readyState >= 2) {
+  // 間隔內沿用上一張金髮圖層；非變身時藏層+清快取，零推論負擔。
+  // ?hair 時一律關掉：那個模式的髮束長在合成臉上，染金卻是真臉，兩層會落在不同顆頭上
+  if (!hairDebug && hairLive && tintLayer && video.readyState >= 2) {
     if (now - lastTintAt >= TINT_INTERVAL_MS) {
       lastTintAt = now;
       const t0 = performance.now();
