@@ -57,8 +57,11 @@ function fakeFace(sw: number, sh: number, now: number): import('./types').FaceFr
   points[10] = { x: cx, y: cy - w * 0.31 }; // 額頂：上臉高 ≈ 0.31 臉寬
   points[234] = { x: cx - w / 2, y: cy };
   points[454] = { x: cx + w / 2, y: cy };
-  // 擺頭 ±40°（yaw，column-major 旋轉矩陣）：免相機檢視頭皮圓頂的側轉體積感
-  const yaw = Math.sin(now / 1500) * (40 * Math.PI) / 180;
+  // 擺頭 ±75°（yaw，column-major 旋轉矩陣）：免相機檢視後腦覆蓋與側轉體積感。
+  // ⚠ 75 是暫定值，不是量出來的：#13 的追蹤上限尚未實機量測（MediaPipe 掉追蹤的
+  // 角度）。量到之後把這裡對上去 —— 掃描比追蹤上限窄，就會驗不到實際看得到的角度
+  const HAIR_YAW_SWEEP_DEG = 75;
+  const yaw = Math.sin(now / 1500) * (HAIR_YAW_SWEEP_DEG * Math.PI) / 180;
   const c = Math.cos(yaw);
   const s = Math.sin(yaw);
   return {
