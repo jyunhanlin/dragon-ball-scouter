@@ -312,12 +312,12 @@ describe('帽簷(brim)', () => {
     }
   });
 
-  it('帽簷髮束往下蓋,不是往上豎 — 往上豎就蓋不住髮際線那圈真髮', () => {
-    // y-down:正值 = 往下。帽簷那點的「局部 x 軸像」幾乎是朝上的,所以 tilt 給錯號
-    // 會讓髮束筆直往上長 —— 紙上看起來只是符號,畫面上是整圈帽簷消失
+  it('帽簷髮束往上走,不是垂下來 — 垂下來的讀感是濕頭髮不是賽亞人', () => {
+    // y-down:負值 = 往上。帽簷那點的「局部 x 軸像」幾乎朝上,tilt 一過某個量就會
+    // 翻過去變成往下垂 —— 紙上看起來只是一個數字,畫面上是整顆頭的讀感翻掉
     for (const s of BRIM) {
       const g = spikeGrowth(domeNormal(dome, domePoint(dome, s.ex, s.ez)), s.tilt);
-      expect(g.y).toBeGreaterThan(0);
+      expect(g.y).toBeLessThan(0);
     }
   });
 });
