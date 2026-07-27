@@ -46,6 +46,11 @@ if (hairDebug) startOverlay.hidden = true;
 // ?tint 免變身強制染金＋髮束（仍需相機）：染金與髮束的金色並排仲裁用，不用每次吼到變身
 const tintDebug = urlParams.has('tint');
 
+// ?proxy 免變身強制開髮層＋把頭皮圓頂(青)與頭部代理(洋紅)畫成線框疊在真臉上（仍需相機）。
+// 量的是「模型頭骨 vs 真人頭骨」的前後錨點 —— 正交投影下純 z 位移在正面完全看不出來，
+// 一側轉才現形，所以這個數字只能實機量（同 effort 與追蹤上限的前例）
+const proxyDebug = urlParams.has('proxy');
+
 function fakeFace(sw: number, sh: number, now: number): import('./types').FaceFrame {
   // 稀疏陣列：只填 hair3d 實際讀的 landmark（168 鼻樑、10 額頂、234/454 兩頰）。
   // 髮層若新增讀取，會以 undefined 炸在讀取點 — 屆時補上對應假點
@@ -132,7 +137,7 @@ function initPreload(): void {
     // three.js chunk 動態載入（主 bundle 不含 three），WebGL 不可用時 SKIP
     hairWait = import('./hair3d')
       .then((m) => {
-        hair3d = m.createHair3D(canvas);
+        hair3d = m.createHair3D(canvas, proxyDebug);
         return 'ok' as const;
       })
       .catch(() => 'skip' as const);
@@ -348,7 +353,7 @@ function loop(): void {
   // 3D 刺蝟頭只在變身期間渲染，或被調參旗標強制開（模組內部處理 display/skip，平時零成本）
   const transformed = ssjAt > 0;
   // 染金與髮束同一個開關：兩層是同一場並排仲裁，永遠一起出現、一起消失
-  const hairLive = transformed || tintDebug;
+  const hairLive = transformed || tintDebug || proxyDebug;
   if (hairDebug) {
     // 假 frame 用螢幕尺寸當 video 尺寸（coverTransform 成恆等），不依賴相機
     const sw = canvas.clientWidth;
@@ -374,7 +379,7 @@ function loop(): void {
     // 彈簧一次收斂,視覺上 snap 一下。調參模式限定,不修
     hair3d?.render({
       frame: hairLive ? frame : null,
-      ssjMs: transformed ? now - ssjAt : tintDebug ? now : 0,
+      ssjMs: transformed ? now - ssjAt : tintDebug || proxyDebug ? now : 0,
       videoW: video.videoWidth,
       videoH: video.videoHeight,
       mirrored: facing === 'user',

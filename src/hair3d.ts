@@ -206,7 +206,24 @@ function fsQuad(frag: string, uniforms: Record<string, THREE.IUniform>): THREE.M
   return new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
 }
 
-export function createHair3D(insertBefore: HTMLElement): Hair3D {
+/**
+ * `?proxy` 量具:把頭皮圓頂(青色)與頭部代理(洋紅)畫成線框疊在真臉上。
+ * 存在的理由 —— 圓頂/代理相對真人頭骨的前後錨點是一個**必須實機量**的常數:
+ * 正交投影下純 z 位移在正面完全看不出來,一側轉才現形。沒有這個量具就只能猜,
+ * 而這個專案猜過的前科見 CLAUDE.md 的 effort gotcha。
+ */
+function headModelWires(): { dome: THREE.Mesh; proxy: THREE.Mesh } {
+  const geo = new THREE.SphereGeometry(1, 16, 10);
+  const wire = (color: number): THREE.Mesh =>
+    new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, wireframe: true, depthTest: false }));
+  const dome = wire(0x00e5ff);
+  const proxy = wire(0xff2fd0);
+  dome.renderOrder = 10; // 畫在髮束之上:量的是錨點位置,不是誰擋誰
+  proxy.renderOrder = 10;
+  return { dome, proxy };
+}
+
+export function createHair3D(insertBefore: HTMLElement, showHeadModel = false): Hair3D {
   // premultipliedAlpha 是 three 預設,但 composite 的 rgb>alpha 加色技巧整個賴在它上面,顯式釘住
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, premultipliedAlpha: true });
   renderer.setPixelRatio(1);
@@ -277,6 +294,10 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   proxy.renderOrder = -1;
   group.add(proxy);
 
+  // ?proxy 量具:與髮束同一個 group,所以跟著頭部姿態走
+  const wires = showHeadModel ? headModelWires() : null;
+  if (wires) group.add(wires.dome, wires.proxy);
+
   group.visible = false;
   scene.add(group);
 
@@ -289,6 +310,12 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
     const hp = headProxy(dome);
     proxy.position.set(hp.cx, hp.cy, hp.cz);
     proxy.scale.set(hp.rx, hp.ry, hp.rz);
+    if (wires) {
+      wires.dome.position.set(dome.cx, dome.cy, dome.cz);
+      wires.dome.scale.set(dome.rx, dome.ry, dome.rz);
+      wires.proxy.position.copy(proxy.position);
+      wires.proxy.scale.copy(proxy.scale);
+    }
     for (const { spike, hull, s } of pairs) {
       const p = domePoint(dome, s.x, s.z);
       const n = domeNormal(dome, p);
