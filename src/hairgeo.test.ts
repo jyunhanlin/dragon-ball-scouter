@@ -312,7 +312,16 @@ describe('帽簷(brim)', () => {
     }
   });
 
-  it('帽簷髮束往上走,不是垂下來 — 垂下來的讀感是濕頭髮不是賽亞人', () => {
+  it('每一根髮束都往上走 — 有一根垂下來,整顆頭的讀感就從賽亞人掉到濕頭髮', () => {
+    // 「往上走」是造型的全域規則,不只帽簷。tilt 一過某個量,生長方向會翻過去朝下 ——
+    // 紙上看起來只是一個數字,畫面上是整片髮量倒下來
+    for (const s of SPIKES) {
+      const g = spikeGrowth(domeNormal(dome, domePoint(dome, s.ex, s.ez)), s.tilt);
+      expect(g.y).toBeLessThan(0);
+    }
+  });
+
+  it('帽簷髮束往上走(保留:帽簷是最容易翻掉的一圈)', () => {
     // y-down:負值 = 往上。帽簷那點的「局部 x 軸像」幾乎朝上,tilt 一過某個量就會
     // 翻過去變成往下垂 —— 紙上看起來只是一個數字,畫面上是整顆頭的讀感翻掉
     for (const s of BRIM) {
