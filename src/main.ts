@@ -8,6 +8,7 @@ import {
   smooth, median, chargeStep, ssjClimb, SSJ_CHARGE_MS, SSJ_EFFORT, OVER_LIMIT,
 } from './power';
 import { initial, start, tick, type FsmState } from './fsm';
+import { yawFromPose } from './pose';
 import { createTint, TINT_INTERVAL_MS, type TintLayer } from './tint';
 import { Hud, coverTransform, toScreen, type Box } from './hud';
 import { initAudio, playLock, playTick, playOverload, playChargeTick, playTransform } from './sfx';
@@ -86,6 +87,7 @@ let fpsAt = performance.now();
 let fps = 0;
 let ssjAt = 0;                // 變身時間戳（0=未變身）；overload 期間沿用，回搜尋才歸零
 
+let lastYaw: number | null = null; // debug 用：最後一次讀到的側轉角，追丟後留在畫面上（追蹤上限就是這個數字）
 let lastTintAt = 0;           // 染金分割節流（20Hz，見 TINT_INTERVAL_MS）
 let tintImg: HTMLCanvasElement | null = null; // 最近一次分割產出的金髮圖層（節流間隔沿用）
 let tintMs = 0;               // debug 用：最近一次頭髮分割耗時
@@ -400,11 +402,26 @@ function loop(): void {
     const brow = ((frame?.blend.browDownLeft ?? 0) + (frame?.blend.browDownRight ?? 0)) / 2;
     const eye = ((frame?.blend.eyeWideLeft ?? 0) + (frame?.blend.eyeWideRight ?? 0)) / 2;
     const eff = frame ? effortFromBlend(frame.blend) : 0;
+    // 側轉儀表（追蹤上限的量測工具）：yaw 與追蹤狀態同一行。追丟時讀數換成 `--`
+    // 而不是凍在最後一個值——凍住的數字會讓人以為還追得到；掉追蹤的角度另外用
+    // `LOST @` 留在畫面上，那個數字就是追蹤上限。yawFromPose 只在這裡呼叫，
+    // 非 ?debug 路徑因此零成本。
+    // ⚠ 這個角度**不吃鏡像鏈**：CSS 的 scaleX(-1) 只翻顯示，姿態矩陣本身不受影響，
+    // 所以正負永遠跟著「使用者的頭」而不是「畫面上的方向」。前鏡頭下畫面看起來
+    // 會反過來，那是預期的——量的是頭轉了幾度，不是畫面往哪邊移
+    const signed = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(1)}°`;
+    const yaw = yawFromPose(frame?.pose);
+    if (yaw !== null) lastYaw = yaw;
+    const yawTxt = yaw === null ? '  --  ' : signed(yaw);
+    const track = frame
+      ? `TRACKING${frame.pose ? '' : ' (no pose)'}`
+      : `LOST${lastYaw === null ? '' : ` @${signed(lastYaw)}`}`;
     debugEl.textContent =
       `phase   ${state.phase}\n` +
       `effort  ${eff.toFixed(2)} (need ≥ ${SSJ_EFFORT.toFixed(2)})\n` +
       `charge  ${Math.round(charge)}/${SSJ_CHARGE_MS}\n` +
       `jaw ${jaw.toFixed(2)}  brow ${brow.toFixed(2)}  eye ${eye.toFixed(2)}\n` +
+      `yaw     ${yawTxt}  ${track}\n` +
       `tint    ${tintLayer ? `ready(${tintLayer.mode})` : 'off'}  seg ${tintMs.toFixed(1)}ms\n` +
       `fps     ${fps.toFixed(0)}  hair3d ${hair3d ? 'ready' : 'off'}`;
   }

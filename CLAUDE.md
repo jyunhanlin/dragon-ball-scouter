@@ -31,9 +31,13 @@ camera.ts (getUserMedia stream)
 (while transformed only)
   tint.ts (MediaPipe hair segmentation → gold-tinted real hair on #tint canvas, 20Hz)
   hair3d.ts (three.js spike layer, drawn above #tint)
+
+(off the per-frame chain)
+  pose.ts (pose matrix → yaw degrees) — called only inside `if (debugEl)`, so the
+  non-?debug path pays nothing. Sign follows the head, not the mirrored screen.
 ```
 
-**Purity split (drives what's testable):** `power.ts`, `fsm.ts`, `hairgeo.ts`, `hairdyn.ts`, and the transform functions in `hud.ts` are pure — no browser APIs — and are the only unit-tested code. `camera.ts`, `detector.ts`, `sfx.ts`, `hair3d.ts`, `tint.ts`, and the `Hud` class are browser-bound and verified manually in a real browser (camera permission can't be automated). `hairgeo.ts` outputs plain arrays (no three import); `hair3d.ts` only assembles them into BufferGeometry.
+**Purity split (drives what's testable):** `power.ts`, `fsm.ts`, `hairgeo.ts`, `hairdyn.ts`, `pose.ts`, and the transform functions in `hud.ts` are pure — no browser APIs — and are the only unit-tested code. `camera.ts`, `detector.ts`, `sfx.ts`, `hair3d.ts`, `tint.ts`, and the `Hud` class are browser-bound and verified manually in a real browser (camera permission can't be automated). `hairgeo.ts` outputs plain arrays (no three import); `hair3d.ts` only assembles them into BufferGeometry.
 
 ## Invariants that span files
 
