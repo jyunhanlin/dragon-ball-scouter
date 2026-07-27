@@ -335,9 +335,11 @@ describe('頭部代理(Head Proxy)', () => {
     for (const aspect of ASPECTS) {
       const d = fitDome(aspect);
       const proxy = headProxy(d);
-      // 門檻取 -0.2:M1 的 12 根(最遠 -0.14)全在裡面,#15 補的後腦全在外面
+      // 門檻取 -0.2:頭頂與前側在裡面,後腦在外面。不釘死根數 —— 造型還在調,
+      // 釘根數只會在每次加減髮束時假紅,擋不到「代理啃髮根」這個真正的失效
       const front = SPIKES.filter((s) => s.ez >= -0.2);
-      expect(front.length).toBe(12);
+      expect(front.length).toBeGreaterThan(0);
+      expect(front.length).toBeLessThan(SPIKES.length);
       for (const s of front) {
         const p = domePoint(d, s.ex, s.ez);
         const frontZ = proxyFrontZ(proxy, p);
