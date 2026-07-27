@@ -16,7 +16,8 @@
 import * as THREE from 'three';
 import type { FaceFrame } from './types';
 import {
-  SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding, measureAspect, type Dome,
+  SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding, headProxy, measureAspect,
+  type Dome,
 } from './hairgeo';
 import {
   INERTIA_DAMPING, INERTIA_STIFFNESS, atRest, stepSpring, updraft, yellIntensity, type Spring3,
@@ -176,13 +177,21 @@ function makeBendable(mat: THREE.Material, uBend: THREE.IUniform<THREE.Vector3>,
   mat.customProgramCacheKey = () => (rim ? 'hair-bend-rim' : 'hair-bend');
 }
 
-/** 純陣列(hairgeo)→ BufferGeometry;winding 反轉見 hairgeo.flipWinding 的說明 */
+/**
+ * 進場幾何的 winding 反轉 — 髮層唯一該碰 winding 的地方,理由見 hairgeo.flipWinding。
+ * 每個進 scene 的幾何都必須經過這裡,否則 Front/BackSide 語義會靜默反轉。
+ */
+function setFlippedIndex(geo: THREE.BufferGeometry, indices: Uint16Array): void {
+  geo.setIndex(new THREE.BufferAttribute(flipWinding(indices), 1));
+}
+
+/** 純陣列(hairgeo)→ BufferGeometry */
 function toBufferGeometry(g: ReturnType<typeof buildSpike>): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(g.positions, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(g.normals, 3));
   geo.setAttribute('spineT', new THREE.BufferAttribute(g.spineT, 1)); // M2 彎曲的鉤子
-  geo.setIndex(new THREE.BufferAttribute(flipWinding(g.indices), 1));
+  setFlippedIndex(geo, g.indices);
   return geo;
 }
 
@@ -253,6 +262,21 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
     group.add(hull, spike);
     pairs.push({ spike, hull, s, uBend, spring: atRest(0, 0, 0), seed: i });
   });
+  // 頭部代理(Head Proxy):代表使用者真頭顱的橢球,只寫深度不寫顏色。後腦有了
+  // 髮之後,轉回正面時那些髮必須被頭擋住,否則會直接畫在臉上(#14 的硬門檻)。
+  // - colorWrite:false → 只留深度足跡:染金(#tint)、HUD、bloom 光暈完全不受影響
+  //   (bloom 的亮部萃取讀的是 baseRT 的 rgb,代理沒寫進去)
+  // - renderOrder=-1 是必要的:髮束若先畫並通過深度測試就已經寫進顏色了,
+  //   代理之後才補深度也救不回來
+  // - 形狀不是等比縮小的圓頂,理由見 hairgeo 的 PROXY_SCALE
+  const proxyGeo = new THREE.SphereGeometry(1, 24, 16);
+  // winding 反轉的代價在這裡是靜默的:漏掉的話 FrontSide culling 會留下遠側半球,
+  // 深度足跡整個跑到頭後面 — 不報錯,只是遮擋失效
+  setFlippedIndex(proxyGeo, Uint16Array.from(proxyGeo.getIndex()!.array));
+  const proxy = new THREE.Mesh(proxyGeo, new THREE.MeshBasicMaterial({ colorWrite: false }));
+  proxy.renderOrder = -1;
+  group.add(proxy);
+
   group.visible = false;
   scene.add(group);
 
@@ -262,6 +286,9 @@ export function createHair3D(insertBefore: HTMLElement): Hair3D {
   const roll = new THREE.Quaternion();
   const zAxis = new THREE.Vector3(0, 0, 1);
   function placeSpikes(dome: Dome): void {
+    const hp = headProxy(dome);
+    proxy.position.set(hp.cx, hp.cy, hp.cz);
+    proxy.scale.set(hp.rx, hp.ry, hp.rz);
     for (const { spike, hull, s } of pairs) {
       const p = domePoint(dome, s.x, s.z);
       const n = domeNormal(dome, p);

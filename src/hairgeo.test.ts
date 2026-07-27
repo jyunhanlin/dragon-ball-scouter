@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ASPECT_MAX, ASPECT_MIN, SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding,
-  measureAspect, type SpikeSpec,
+  headProxy, measureAspect, type SpikeSpec,
 } from './hairgeo';
 import type { Pt } from './types';
 
@@ -274,6 +274,112 @@ describe('SPIKES 配置表 × 圓頂', () => {
       expect(ellipsoidF(dome, p)).toBeCloseTo(0, 6);
       expect(p.x).toBeCloseTo(s.x, 6); // clamp 會動座標 — 沒動表示在足印內
       expect(p.z).toBeCloseTo(s.z, 6);
+    }
+  });
+
+  it('至少一根髮根長在圓頂的背半球深處 — 頭頂往後沒有髮根,側轉時後腦就是空的', () => {
+    const dome = fitDome(0.31);
+    // 足印前後座標:+1 = 圓頂前緣(髮際線)、0 = 頭頂正中、-1 = 後緣(後頸)
+    const footprint = SPIKES.map((s) => (domePoint(dome, s.x, s.z).z - dome.cz) / dome.rz);
+    // #12 量到 M4 之前最後面的髮根只到 -0.14(頭頂往後 8°),整個後腦是空的
+    expect(Math.min(...footprint)).toBeLessThan(-0.5);
+  });
+});
+
+describe('頭部代理(Head Proxy)', () => {
+  const ASPECTS = [ASPECT_MIN, 0.28, 0.31, 0.36, ASPECT_MAX];
+
+  it('前緣退到鼻樑平面之後 — 圓頂本身鼓在臉前,原樣拿來擋會蓋掉整張臉與額前垂髮', () => {
+    for (const aspect of ASPECTS) {
+      const d = fitDome(aspect);
+      expect(d.cz + d.rz).toBeGreaterThan(0); // 對照組:圓頂前緣在鼻樑(z=0)之前
+      expect(headProxy(d).cz + headProxy(d).rz).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it('每根髮根都在代理外側,任何上臉比例皆然 — 代理啃到髮根會把髮束根部削掉或撕出 z-fighting', () => {
+    for (const aspect of ASPECTS) {
+      const d = fitDome(aspect);
+      const proxy = headProxy(d);
+      for (const s of SPIKES) {
+        expect(ellipsoidF(proxy, domePoint(d, s.x, s.z))).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  /** 正交沿 +z 看:代理在 (p.x,p.y) 的前表面 z;null = 該像素在代理剪影外(擋不到) */
+  function proxyFrontZ(proxy: ReturnType<typeof headProxy>, p: { x: number; y: number }): number | null {
+    const ex = (p.x - proxy.cx) / proxy.rx;
+    const ey = (p.y - proxy.cy) / proxy.ry;
+    const covered = ex * ex + ey * ey;
+    return covered < 1 ? proxy.cz + proxy.rz * Math.sqrt(1 - covered) : null;
+  }
+
+  it('頭頂與前側的髮根從正面看得見 — 代理啃到髮根,既有 12 根的根部就會被削掉(#14 回歸)', () => {
+    // 驗的是髮根「中心」。底蓋圓盤與髮束本體的朝向要靠 hair3d 的 tilt/roll 合成才
+    // 算得準(既有 12 根 tilt 全非零),那在純模組邊界之外 —— 依 #12 的 Testing
+    // Decisions,遮擋外觀以 ?hair 對改動前 HEAD 並排實看為準。
+    // (已知且刻意不管:z=-0.15 那兩根的底蓋後緣確實落在代理之後,但那圈點的法線
+    //  指進頭裡、正面是背面,FrontSide 直接 cull —— 並排比對確認外觀零變化)
+    for (const aspect of ASPECTS) {
+      const d = fitDome(aspect);
+      const proxy = headProxy(d);
+      const front = SPIKES.filter((s) => (domePoint(d, s.x, s.z).z - d.cz) / d.rz >= -0.5);
+      expect(front.length).toBeGreaterThan(0);
+      expect(front.length).toBeLessThan(SPIKES.length); // 後腦至少一根，見上一條測試
+      for (const s of front) {
+        const p = domePoint(d, s.x, s.z);
+        const frontZ = proxyFrontZ(proxy, p);
+        if (frontZ !== null) expect(p.z).toBeGreaterThan(frontZ);
+      }
+    }
+  });
+
+  // M2 動態把髮尖往上帶的餘裕(對髮束長)。取靜止上飄 + 吼滿的上豎/飄動量級
+  // (hair3d 的 UPDRAFT_AMP/YELL_ERECT/YELL_FLUTTER_GAIN),不取 MAX_BEND 或
+  // RISE_MAX_BEND 的鉗位值 —— 那是劇烈甩動與豎起演出的瞬態上限,拿它當常態門檻
+  // 會把後腦髮束逼到短得看不見。葉模組規則禁止匯入 hair3d,故此處持有副本
+  // (與 hairdyn 的 EFFORT_FULL 同一個慣例);那邊調參時要回頭看這條會不會紅
+  const DYNAMIC_HEADROOM = 0.15;
+
+  it('後腦髮束連動態餘裕都留在代理剪影內 — 髮尖冒出上緣,正面就看得見那根(#14 AC1)', () => {
+    // 這是窄臉才會爆的一條:圓頂 ry 隨 aspect 縮,髮束長 h 卻是臉寬單位的定值,
+    // 所以最緊的是 ASPECT_MIN 那端 —— 對著單一張臉目測驗不出來
+    for (const aspect of ASPECTS) {
+      const d = fitDome(aspect);
+      const proxy = headProxy(d);
+      const back = SPIKES.filter((s) => (domePoint(d, s.x, s.z).z - d.cz) / d.rz < -0.5);
+      expect(back.length).toBeGreaterThan(0);
+      for (const s of back) {
+        expect(s.tilt).toBe(0); // 這條算式假設生長方向就是圓頂法線
+        const p = domePoint(d, s.x, s.z);
+        const n = domeNormal(d, p);
+        const tip = {
+          x: p.x + n.x * s.h,
+          y: p.y + n.y * s.h - DYNAMIC_HEADROOM * s.h, // 動態只會把髮尖往上(-y)推
+          z: p.z + n.z * s.h,
+        };
+        const frontZ = proxyFrontZ(proxy, tip);
+        expect(frontZ).not.toBeNull();
+        expect(frontZ!).toBeGreaterThan(tip.z);
+      }
+    }
+  });
+
+  it('後腦深處的髮根被代理擋在後面 — 正面朝向時後腦髮束不會畫在臉上', () => {
+    for (const aspect of ASPECTS) {
+      const d = fitDome(aspect);
+      const proxy = headProxy(d);
+      // 只管足印 -0.5 以後的後腦髮根:頭頂附近(既有四根「後排」只到 -0.14)本來
+      // 就該從正面看得見,那是頭頂的髮束不是後腦的
+      const back = SPIKES.filter((s) => (domePoint(d, s.x, s.z).z - d.cz) / d.rz < -0.5);
+      expect(back.length).toBeGreaterThan(0);
+      for (const s of back) {
+        const p = domePoint(d, s.x, s.z);
+        const frontZ = proxyFrontZ(proxy, p);
+        expect(frontZ).not.toBeNull(); // 髮根落在代理的剪影內,才擋得到
+        expect(frontZ!).toBeGreaterThan(p.z);
+      }
     }
   });
 });

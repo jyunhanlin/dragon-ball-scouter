@@ -179,12 +179,20 @@ export const SPIKES: SpikePlacement[] = [
   // 合成(偏側向下、微交叉),且 |tilt|>π/2 後 bend 同號實際往「內」勾 — 以畫面為準
   { x: -0.15, h: 0.34, tilt: -2.55, z: 0.28, bend: -0.18, r: 0.07 },
   { x: 0.13, h: 0.3, tilt: 2.6, z: 0.28, bend: 0.16, r: 0.06 },
+  // 後腦追蹤彈(#14):第一根長在圓頂背半球深處的髮束(足印 -0.985,前 12 根最遠只到
+  // -0.14)。它的工作是釘住遮擋 —— 正面被頭部代理擋掉、側轉才露出來 —— 所以刻意
+  // 短又貼近赤道:髮尖一旦冒出代理剪影上緣,遮擋成不成立就驗不出來了。長度上限由
+  // **最窄的上臉比例**(ASPECT_MIN)決定,不是由目測的那一張臉 —— 圓頂的 ry 隨
+  // aspect 縮,h 卻是臉寬單位的定值,窄臉才是最緊的那一端(有測試釘住)。
+  // tilt=0 讓生長方向就是圓頂法線,那條測試才算得準。
+  // 後腦鋪滿(造型/密度)是 #15 的事,這根屆時會被整批取代
+  { x: 0, h: 0.3, tilt: 0, z: -0.5725, bend: -0.16, r: 0.07 },
 ];
 
 // ---- 頭皮圓頂(Scalp Dome):髮根分佈面 ----
 
-/** 半橢球(臉寬單位、鼻樑為原點、y-down):髮根落在上殼,髮束沿法線生長 */
-export interface Dome {
+/** 軸對齊橢球(臉寬單位、鼻樑為原點、y-down)。頭皮圓頂與頭部代理共用這個形狀 */
+export interface Ellipsoid {
   cx: number;
   cy: number;
   cz: number;
@@ -192,6 +200,9 @@ export interface Dome {
   ry: number;
   rz: number;
 }
+
+/** 頭皮圓頂:只用上殼 — 髮根落在上面,髮束沿法線生長 */
+export type Dome = Ellipsoid;
 
 // 圓頂比例(對臉寬;由造型目測校準,T4 對基準圖時再調)
 export const DOME_RX = 0.58; // 半寬:略寬於臉框,髮叢才蓋得住鬢角上緣
@@ -242,6 +253,34 @@ export function domePoint(d: Dome, x: number, z: number): { x: number; y: number
   }
   const y = d.cy - d.ry * Math.sqrt(1 - ex * ex - ez * ez);
   return { x: d.cx + ex * d.rx, y, z: d.cz + ez * d.rz };
+}
+
+// ---- 頭部代理(Head Proxy):只寫深度、不寫顏色的擋頭幾何 ----
+
+// 代理相對圓頂的形變(對圓頂半徑的比例 + 中心往後推的量,臉寬單位)。
+// ⚠ 代理不是「等比縮小的圓頂」,而且不能是 —— 圓頂是「髮根長在哪」的面,它的前緣
+// 鼓到 z = cz+rz = +0.42,遠在鼻樑(z=0)之前;而額前兩撮垂髮 tilt 翻過 π/2 之後
+// 生長方向是法線的 -83%,髮尖落在圓頂內部(歸一化半徑約 0.52)。等比縮小要縮到
+// 0.52 以下才不會把那兩撮吃掉,那種尺寸連後腦都擋不住 —— 等比這條路是死的。
+// 因此代理壓扁 z(×0.4)並往後推:前緣正好退到鼻樑平面,前面讓開垂髮與臉,
+// 頂/側/背仍在髮根面內側。已知代價:側轉大角度時代理的剪影比真頭窄,後腦真正
+// 鋪滿(#15)時要重看這組值。
+export const PROXY_SCALE = { rx: 0.95, ry: 0.96, rz: 0.4 }; // 對圓頂半徑的比例
+export const PROXY_CZ = -0.12; // 中心再往後推的量(臉寬單位)
+
+/** 頭部代理:整顆橢球都算數 — 擋頭的是它的近側表面,臉那半邊本來就屬於頭 */
+export type HeadProxy = Ellipsoid;
+
+/** 圓頂 → 頭部代理。hair3d 只負責把這六個數組成 depth-only mesh */
+export function headProxy(d: Dome): HeadProxy {
+  return {
+    cx: d.cx,
+    cy: d.cy,
+    cz: d.cz + PROXY_CZ,
+    rx: d.rx * PROXY_SCALE.rx,
+    ry: d.ry * PROXY_SCALE.ry,
+    rz: d.rz * PROXY_SCALE.rz,
+  };
 }
 
 /** 圓頂面上一點的外法線(橢球隱函數梯度,單位化)= 髮束的生長方向 */
