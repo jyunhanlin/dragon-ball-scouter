@@ -331,6 +331,18 @@ describe('帽簷(brim)', () => {
   });
 });
 
+describe('前額覆蓋', () => {
+  it('髮際線到頭頂之間沒有斷層 — 斷層在畫面上是額頭正中一條橫向空白(實機可見)', () => {
+    // 前額的門檻(0.4)比後腦的(0.27)寬:這一段圓頂面朝鏡頭,髮束本體撐得住較大的
+    // 排距;後腦的面往鏡頭外彎,同樣排距就會露出頭皮
+    const front = SPIKES.map((s) => s.ez).filter((v) => v >= 0.1).sort((a, b) => b - a);
+    expect(front.length).toBeGreaterThan(0);
+    expect(Math.max(...front)).toBeGreaterThan(0.9); // 有排到髮際線
+    const gaps = front.slice(1).map((v, i) => front[i] - v);
+    expect(Math.max(...gaps)).toBeLessThan(0.4);
+  });
+});
+
 describe('頭部代理(Head Proxy)', () => {
   const ASPECTS = [ASPECT_MIN, 0.28, 0.31, 0.36, ASPECT_MAX];
 
