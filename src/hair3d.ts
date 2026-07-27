@@ -317,7 +317,7 @@ export function createHair3D(insertBefore: HTMLElement, showHeadModel = false): 
       wires.proxy.scale.copy(proxy.scale);
     }
     for (const { spike, hull, s } of pairs) {
-      const p = domePoint(dome, s.x, s.z);
+      const p = domePoint(dome, s.ex, s.ez);
       const n = domeNormal(dome, p);
       spike.position.set(p.x, p.y, p.z);
       spike.quaternion.setFromUnitVectors(UP, nrm.set(n.x, n.y, n.z));

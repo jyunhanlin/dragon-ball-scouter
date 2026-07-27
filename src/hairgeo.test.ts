@@ -225,7 +225,7 @@ describe('fitDome', () => {
     expect(d.rx).toBeGreaterThan(0);
     expect(d.ry).toBeGreaterThan(0);
     expect(d.rz).toBeGreaterThan(0);
-    expect(domePoint(d, d.cx, d.cz).y).toBeLessThan(d.cy);
+    expect(domePoint(d, 0, 0).y).toBeLessThan(d.cy);
   });
 
   it('臉越長(aspect 越大)圓頂越高:ry 隨 aspect 等比放大(實際量程)', () => {
@@ -270,18 +270,18 @@ describe('SPIKES 配置表 × 圓頂', () => {
   it('全部髮根落在橢球面上且未被 clamp(座標原樣保留)', () => {
     const dome = fitDome(0.31);
     for (const s of SPIKES) {
-      const p = domePoint(dome, s.x, s.z);
+      const p = domePoint(dome, s.ex, s.ez);
       expect(ellipsoidF(dome, p)).toBeCloseTo(0, 6);
-      expect(p.x).toBeCloseTo(s.x, 6); // clamp 會動座標 — 沒動表示在足印內
-      expect(p.z).toBeCloseTo(s.z, 6);
+      // clamp 會動足印座標 — 換算回去仍等於配置表的值,表示沒被夾
+      expect((p.x - dome.cx) / dome.rx).toBeCloseTo(s.ex, 6);
+      expect((p.z - dome.cz) / dome.rz).toBeCloseTo(s.ez, 6);
     }
   });
 
   it('後腦鋪滿:背半球的髮根分佈到後緣,而且不留大洞(#15 整頭覆蓋)', () => {
-    const dome = fitDome(0.31);
     // 足印前後座標:+1 = 圓頂前緣(髮際線)、0 = 頭頂正中、-1 = 後緣(後頸)
     // 只看頭頂往後那一段;額前垂髮(+0.72)與前排(+0.16)之間的空檔是既有造型,不在此列
-    const footprint = SPIKES.map((s) => (domePoint(dome, s.x, s.z).z - dome.cz) / dome.rz)
+    const footprint = SPIKES.map((s) => s.ez)
       .filter((v) => v <= 0.2)
       .sort((a, b) => b - a);
     // #12 量到 M4 之前最後面的髮根只到 -0.14(頭頂往後 8°),整個後腦是空的
@@ -297,11 +297,14 @@ describe('SPIKES 配置表 × 圓頂', () => {
 describe('頭部代理(Head Proxy)', () => {
   const ASPECTS = [ASPECT_MIN, 0.28, 0.31, 0.36, ASPECT_MAX];
 
-  it('前緣退到鼻樑平面之後 — 圓頂本身鼓在臉前,原樣拿來擋會蓋掉整張臉與額前垂髮', () => {
+  it('代理完全在圓頂內側 — 頂穿髮根面就會從髮束之間鑽出來,或把髮根啃掉', () => {
     for (const aspect of ASPECTS) {
       const d = fitDome(aspect);
-      expect(d.cz + d.rz).toBeGreaterThan(0); // 對照組:圓頂前緣在鼻樑(z=0)之前
-      expect(headProxy(d).cz + headProxy(d).rz).toBeLessThanOrEqual(0);
+      const p = headProxy(d);
+      expect(p.cz + p.rz).toBeLessThan(d.cz + d.rz); // 前緣
+      expect(p.cz - p.rz).toBeGreaterThan(d.cz - d.rz); // 後緣
+      expect(p.cy - p.ry).toBeGreaterThan(d.cy - d.ry); // 頭頂(y-down:值越大越低)
+      expect(p.rx).toBeLessThan(d.rx);
     }
   });
 
@@ -310,7 +313,7 @@ describe('頭部代理(Head Proxy)', () => {
       const d = fitDome(aspect);
       const proxy = headProxy(d);
       for (const s of SPIKES) {
-        expect(ellipsoidF(proxy, domePoint(d, s.x, s.z))).toBeGreaterThan(0);
+        expect(ellipsoidF(proxy, domePoint(d, s.ex, s.ez))).toBeGreaterThan(0);
       }
     }
   });
@@ -333,10 +336,10 @@ describe('頭部代理(Head Proxy)', () => {
       const d = fitDome(aspect);
       const proxy = headProxy(d);
       // 門檻取 -0.2:M1 的 12 根(最遠 -0.14)全在裡面,#15 補的後腦全在外面
-      const front = SPIKES.filter((s) => (domePoint(d, s.x, s.z).z - d.cz) / d.rz >= -0.2);
+      const front = SPIKES.filter((s) => s.ez >= -0.2);
       expect(front.length).toBe(12);
       for (const s of front) {
-        const p = domePoint(d, s.x, s.z);
+        const p = domePoint(d, s.ex, s.ez);
         const frontZ = proxyFrontZ(proxy, p);
         if (frontZ !== null) expect(p.z).toBeGreaterThan(frontZ);
       }
@@ -347,10 +350,10 @@ describe('頭部代理(Head Proxy)', () => {
     for (const aspect of ASPECTS) {
       const d = fitDome(aspect);
       const proxy = headProxy(d);
-      const back = SPIKES.filter((s) => (domePoint(d, s.x, s.z).z - d.cz) / d.rz <= -0.3);
+      const back = SPIKES.filter((s) => s.ez <= -0.3);
       expect(back.length).toBeGreaterThan(0);
       for (const s of back) {
-        const p = domePoint(d, s.x, s.z);
+        const p = domePoint(d, s.ex, s.ez);
         const frontZ = proxyFrontZ(proxy, p);
         expect(frontZ).not.toBeNull(); // 髮根落在代理剪影內,才擋得到
         expect(frontZ!).toBeGreaterThan(p.z);
@@ -364,10 +367,10 @@ describe('頭部代理(Head Proxy)', () => {
       const proxy = headProxy(d);
       // 只管足印 -0.5 以後的後腦髮根:頭頂附近(既有四根「後排」只到 -0.14)本來
       // 就該從正面看得見,那是頭頂的髮束不是後腦的
-      const back = SPIKES.filter((s) => (domePoint(d, s.x, s.z).z - d.cz) / d.rz < -0.5);
+      const back = SPIKES.filter((s) => (domePoint(d, s.ex, s.ez).z - d.cz) / d.rz < -0.5);
       expect(back.length).toBeGreaterThan(0);
       for (const s of back) {
-        const p = domePoint(d, s.x, s.z);
+        const p = domePoint(d, s.ex, s.ez);
         const frontZ = proxyFrontZ(proxy, p);
         expect(frontZ).not.toBeNull(); // 髮根落在代理的剪影內,才擋得到
         expect(frontZ!).toBeGreaterThan(p.z);
@@ -407,7 +410,7 @@ describe('domePoint / domeNormal', () => {
   });
 
   it('圓頂頂點的法線朝正上(y-down 的 -y)', () => {
-    const apex = domePoint(dome, dome.cx, dome.cz);
+    const apex = domePoint(dome, 0, 0);
     const n = domeNormal(dome, apex);
     expect(n.x).toBeCloseTo(0, 6);
     expect(n.z).toBeCloseTo(0, 6);

@@ -152,10 +152,15 @@ export function buildSpike(spec: SpikeSpec, radialSegments = 8, rings = 6): Spik
   return { positions, normals, spineT, indices };
 }
 
-/** 髮束擺放:x/z 為圓頂足印座標(臉寬單位)、tilt 為外傾角 */
+/**
+ * 髮束擺放。ex/ez 是**足印座標**:圓頂上殼的歸一化位置,不是臉寬單位的絕對座標。
+ * ex = 左右(-1 左耳、0 正中、+1 右耳),ez = 前後(+1 髮際線、0 頭頂正中、-1 後頸)。
+ * 髮型因此錨在圓頂上 —— 圓頂的錨點/深度一改(那是實機量出來的,見 DOME_CZ),
+ * 整顆髮型跟著頭骨走,不必重排配置表。tilt 為外傾角。
+ */
 export interface SpikePlacement extends SpikeSpec {
-  x: number;
-  z: number;
+  ex: number;
+  ez: number;
   tilt: number;
 }
 
@@ -164,40 +169,40 @@ export interface SpikePlacement extends SpikeSpec {
 // 左右不對稱(左側整體偏高、主尖偏左)。bend 與 tilt 同號=往外勾。
 export const SPIKES: SpikePlacement[] = [
   // 後排:略矮、往後收
-  { x: -0.42, h: 0.72, tilt: -0.55, z: -0.13, bend: -0.3, r: 0.13 },
-  { x: -0.14, h: 0.88, tilt: -0.18, z: -0.15, bend: -0.14, r: 0.15 },
-  { x: 0.14, h: 0.78, tilt: 0.2, z: -0.15, bend: 0.14, r: 0.14 },
-  { x: 0.42, h: 0.6, tilt: 0.55, z: -0.13, bend: 0.3, r: 0.12 },
+  { ex: -0.724, ez: -0.1, h: 0.72, tilt: -0.55, bend: -0.3, r: 0.13 },
+  { ex: -0.241, ez: -0.14, h: 0.88, tilt: -0.18, bend: -0.14, r: 0.15 },
+  { ex: 0.241, ez: -0.14, h: 0.78, tilt: 0.2, bend: 0.14, r: 0.14 },
+  { ex: 0.724, ez: -0.1, h: 0.6, tilt: 0.55, bend: 0.3, r: 0.12 },
   // 前排:高、外傾;主尖偏左(x=-0.08)且最高 — 不對稱的錨點
-  { x: -0.5, h: 0.78, tilt: -0.7, z: 0, bend: -0.38, r: 0.13 },
-  { x: -0.3, h: 1.08, tilt: -0.38, z: 0, bend: -0.27, r: 0.15 },
-  { x: -0.08, h: 1.38, tilt: -0.14, z: 0, bend: -0.18, r: 0.17 },
-  { x: 0.12, h: 1.12, tilt: 0.16, z: 0, bend: 0.18, r: 0.15 },
-  { x: 0.3, h: 0.88, tilt: 0.42, z: 0, bend: 0.3, r: 0.13 },
-  { x: 0.5, h: 0.6, tilt: 0.72, z: 0, bend: 0.38, r: 0.11 },
+  { ex: -0.862, ez: 0.16, h: 0.78, tilt: -0.7, bend: -0.38, r: 0.13 },
+  { ex: -0.517, ez: 0.16, h: 1.08, tilt: -0.38, bend: -0.27, r: 0.15 },
+  { ex: -0.138, ez: 0.16, h: 1.38, tilt: -0.14, bend: -0.18, r: 0.17 },
+  { ex: 0.207, ez: 0.16, h: 1.12, tilt: 0.16, bend: 0.18, r: 0.15 },
+  { ex: 0.517, ez: 0.16, h: 0.88, tilt: 0.42, bend: 0.3, r: 0.13 },
+  { ex: 0.862, ez: 0.16, h: 0.6, tilt: 0.72, bend: 0.38, r: 0.11 },
   // 額前兩撮:短、細,tilt 翻轉過 π/2 → 轉為垂掛。實際方向是圓頂法線+roll 的
   // 合成(偏側向下、微交叉),且 |tilt|>π/2 後 bend 同號實際往「內」勾 — 以畫面為準
-  { x: -0.15, h: 0.34, tilt: -2.55, z: 0.28, bend: -0.18, r: 0.07 },
-  { x: 0.13, h: 0.3, tilt: 2.6, z: 0.28, bend: 0.16, r: 0.06 },
+  { ex: -0.259, ez: 0.72, h: 0.34, tilt: -2.55, bend: -0.18, r: 0.07 },
+  { ex: 0.224, ez: 0.72, h: 0.3, tilt: 2.6, bend: 0.16, r: 0.06 },
   // ---- 後腦(#15 鋪滿):足印 -0.35 → -0.96,接在上面「後排」(-0.14)之後 ----
   // #14 那根刻意藏起來的追蹤彈已由這幾排取代 —— 它為了驗遮擋而縮短又貼赤道,
   // 結果是往後長、要接近 90° 才露得出來,正好是 #12 說的「戴假髮」讀感。
   // 這幾排改用與前側同級的長度沿圓頂法線往上後方長:正面時根部被頭部代理擋住
   // (不會畫在臉上),髮尖與前側一樣冒出頭頂,側轉時整片後腦才有量。
   // 後上排:與現有後排同級的長度,補上頭頂往後的斷層
-  { x: -0.4, h: 0.8, tilt: -0.42, z: -0.255, bend: -0.26, r: 0.13 },
-  { x: -0.13, h: 0.98, tilt: -0.14, z: -0.255, bend: -0.12, r: 0.15 },
-  { x: 0.15, h: 0.9, tilt: 0.16, z: -0.255, bend: 0.13, r: 0.14 },
-  { x: 0.41, h: 0.7, tilt: 0.44, z: -0.255, bend: 0.28, r: 0.12 },
+  { ex: -0.69, ez: -0.35, h: 0.8, tilt: -0.42, bend: -0.26, r: 0.13 },
+  { ex: -0.224, ez: -0.35, h: 0.98, tilt: -0.14, bend: -0.12, r: 0.15 },
+  { ex: 0.259, ez: -0.35, h: 0.9, tilt: 0.16, bend: 0.13, r: 0.14 },
+  { ex: 0.707, ez: -0.35, h: 0.7, tilt: 0.44, bend: 0.28, r: 0.12 },
   // 後中排:圓頂在這裡開始往內收,足印可用的 x 範圍跟著窄
-  { x: -0.3, h: 0.68, tilt: -0.3, z: -0.365, bend: -0.22, r: 0.12 },
-  { x: -0.03, h: 0.82, tilt: -0.06, z: -0.365, bend: -0.1, r: 0.14 },
-  { x: 0.26, h: 0.72, tilt: 0.28, z: -0.365, bend: 0.2, r: 0.12 },
+  { ex: -0.517, ez: -0.57, h: 0.68, tilt: -0.3, bend: -0.22, r: 0.12 },
+  { ex: -0.052, ez: -0.57, h: 0.82, tilt: -0.06, bend: -0.1, r: 0.14 },
+  { ex: 0.448, ez: -0.57, h: 0.72, tilt: 0.28, bend: 0.2, r: 0.12 },
   // 後下排:接近赤道,法線幾乎水平朝後 → 這幾根是側面剪影的後緣
-  { x: -0.17, h: 0.5, tilt: -0.16, z: -0.47, bend: -0.16, r: 0.1 },
-  { x: 0.14, h: 0.46, tilt: 0.15, z: -0.47, bend: 0.15, r: 0.09 },
+  { ex: -0.293, ez: -0.78, h: 0.5, tilt: -0.16, bend: -0.16, r: 0.1 },
+  { ex: 0.241, ez: -0.78, h: 0.46, tilt: 0.15, bend: 0.15, r: 0.09 },
   // 後頸:最後緣,短。足印半徑已到 0.96,再往後會被 FOOTPRINT_MAX 夾走
-  { x: 0, h: 0.34, tilt: 0, z: -0.56, bend: -0.12, r: 0.08 },
+  { ex: 0.0, ez: -0.96, h: 0.34, tilt: 0, bend: -0.12, r: 0.08 },
 ];
 
 // ---- 頭皮圓頂(Scalp Dome):髮根分佈面 ----
@@ -218,9 +223,16 @@ export type Dome = Ellipsoid;
 // 圓頂比例(對臉寬;由造型目測校準,T4 對基準圖時再調)
 export const DOME_RX = 0.58; // 半寬:略寬於臉框,髮叢才蓋得住鬢角上緣
 export const DOME_RY_PER_ASPECT = 0.9; // 高度對上臉高比例(aspect 定義見 fitDome)
-export const DOME_RZ = 0.5; // 前後深
+// 前後深與錨點:圓頂必須包住**頭骨**,不是包住臉。實機照片量到舊值(rz=0.5、
+// cz=-0.08)的後緣比真人後腦短了約 0.5 個臉寬 —— 髮根面根本沒延伸到後腦,
+// 髮束當然全擠在額頭。正交投影下純 z 位移在正面完全不改變畫面,所以這個錯位
+// 正面驗不出來、一側轉才現形;`?proxy` 就是為了量它而存在的量具。
+// 現值由 ?proxy 的青色線框對真人頭骨實機量得(2026-07-27):線框跨 x 340-790、
+// 真人頭跨 480-1010、偵測框寬 425px;用線框投影寬反推側轉角 ≈65°(算 438 vs 實測
+// 450,吻合)→ 中心偏前 180px ≈ 0.47 臉寬、深度短 18%
+export const DOME_RZ = 0.63; // 前後深(後緣到後頸、前緣到髮際線)
 export const DOME_CY = -0.18; // 中心高度(鼻樑上方)
-export const DOME_CZ = -0.08; // 中心略往後,前額髮根才不會浮在臉前
+export const DOME_CZ = -0.55; // 中心在鼻樑後方 = 頭骨中心,不是鼻樑
 const FOOTPRINT_MAX = 0.995; // 足印半徑上限:貼著赤道會讓法線貼平、y 梯度退化
 
 // aspect 鉗位:2D 投影在側轉/點頭時透縮,量出來的比例會失真;
@@ -253,10 +265,10 @@ export function fitDome(aspect: number): Dome {
   };
 }
 
-/** 把配置表的 (x,z) 髮根座標投上圓頂上殼;足印外的座標 clamp 回邊緣 */
-export function domePoint(d: Dome, x: number, z: number): { x: number; y: number; z: number } {
-  let ex = (x - d.cx) / d.rx;
-  let ez = (z - d.cz) / d.rz;
+/** 把足印座標 (ex,ez) 投上圓頂上殼;足印外的座標 clamp 回邊緣 */
+export function domePoint(d: Dome, ex0: number, ez0: number): { x: number; y: number; z: number } {
+  let ex = ex0;
+  let ez = ez0;
   const rad = Math.hypot(ex, ez);
   if (rad > FOOTPRINT_MAX) {
     ex *= FOOTPRINT_MAX / rad;
@@ -276,8 +288,8 @@ export function domePoint(d: Dome, x: number, z: number): { x: number; y: number
 // 因此代理壓扁 z(×0.4)並往後推:前緣正好退到鼻樑平面,前面讓開垂髮與臉,
 // 頂/側/背仍在髮根面內側。已知代價:側轉大角度時代理的剪影比真頭窄,後腦真正
 // 鋪滿(#15)時要重看這組值。
-export const PROXY_SCALE = { rx: 0.95, ry: 0.96, rz: 0.4 }; // 對圓頂半徑的比例
-export const PROXY_CZ = -0.12; // 中心再往後推的量(臉寬單位)
+export const PROXY_SCALE = { rx: 0.95, ry: 0.96, rz: 0.9 }; // 對圓頂半徑的比例
+export const PROXY_CZ = 0; // 中心再往後推的量(臉寬單位)
 
 /** 頭部代理:整顆橢球都算數 — 擋頭的是它的近側表面,臉那半邊本來就屬於頭 */
 export type HeadProxy = Ellipsoid;
