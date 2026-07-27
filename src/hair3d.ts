@@ -16,8 +16,8 @@
 import * as THREE from 'three';
 import type { FaceFrame } from './types';
 import {
-  SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding, headProxy, measureAspect,
-  type Dome,
+  SPIKES, buildScalpShell, buildSpike, domeNormal, domePoint, fitDome, flipWinding, headProxy,
+  measureAspect, type Dome,
 } from './hairgeo';
 import {
   INERTIA_DAMPING, INERTIA_STIFFNESS, atRest, stepSpring, updraft, yellIntensity, type Spring3,
@@ -46,6 +46,7 @@ export interface Hair3D {
 // 可調常數(T4 造型調校的旋鈕)
 export const MAX_BEND = 0.35; // 彎曲位移上限(對髮束長的比例):防止極端甩動把髮束拉爛
 export const OUTLINE_SCALE = 1.08;
+export const SCALP_OUTLINE = 1.025; // 頭皮殼的描邊放大率:曲面比髮束大得多,同樣 1.08 會腫一圈
 export const BLOOM_DOWNSCALE = 4; // 亮部/模糊 RT 對螢幕的縮小倍率
 export const BLOOM_THRESHOLD = 0.55;
 export const BLOOM_STRENGTH = 0.9;
@@ -279,6 +280,18 @@ export function createHair3D(insertBefore: HTMLElement, showHeadModel = false): 
     group.add(hull, spike);
     pairs.push({ spike, hull, s, uBend, spring: atRest(0, 0, 0), seed: i });
   });
+  // 頭皮殼:填滿髮束之間的縫隙,讓髮量讀成一片連續的頭髮而不是一叢分開的錐體。
+  // 幾何依圓頂而定,所以在 placeSpikes(每次變身第一幀)才建。uBend 恆為 0 —— 頭皮
+  // 不跟著 M2 動態擺動,但仍走 makeBendable 以取得與髮束同一套 rim(不然邊緣質感會脫節)
+  const zeroBend: THREE.IUniform<THREE.Vector3> = { value: new THREE.Vector3() };
+  const scalpMat = mat.clone();
+  const scalpHullMat = outlineMat.clone();
+  makeBendable(scalpMat, zeroBend, true);
+  makeBendable(scalpHullMat, zeroBend);
+  const scalp = new THREE.Mesh(new THREE.BufferGeometry(), scalpMat);
+  const scalpHull = new THREE.Mesh(new THREE.BufferGeometry(), scalpHullMat);
+  group.add(scalpHull, scalp);
+
   // 頭部代理(Head Proxy):代表使用者真頭顱的橢球,只寫深度不寫顏色。後腦有了
   // 髮之後,轉回正面時那些髮必須被頭擋住,否則會直接畫在臉上(#14 的硬門檻)。
   // - colorWrite:false → 只留深度足跡:染金(#tint)、HUD、bloom 光暈完全不受影響
@@ -307,6 +320,11 @@ export function createHair3D(insertBefore: HTMLElement, showHeadModel = false): 
   const roll = new THREE.Quaternion();
   const zAxis = new THREE.Vector3(0, 0, 1);
   function placeSpikes(dome: Dome): void {
+    // 頭皮殼的幾何依圓頂而定 — 換一顆頭就重建一次(每次變身第一幀,不是每幀)
+    for (const [mesh, inflate] of [[scalp, 1], [scalpHull, SCALP_OUTLINE]] as const) {
+      mesh.geometry.dispose();
+      mesh.geometry = toBufferGeometry(buildScalpShell(dome, undefined, undefined, undefined, inflate));
+    }
     const hp = headProxy(dome);
     proxy.position.set(hp.cx, hp.cy, hp.cz);
     proxy.scale.set(hp.rx, hp.ry, hp.rz);

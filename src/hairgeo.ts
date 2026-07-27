@@ -337,6 +337,72 @@ export function domeNormal(d: Dome, p: { x: number; y: number; z: number }): { x
   return { x: gx / len, y: gy / len, z: gz / len };
 }
 
+// 頭皮殼的足印邊界:0.95 對應的等高圓約與髮際線齊高 —— 再大會蓋到額頭,
+// 再小髮際線那圈會露出真髮。與髮束的 FOOTPRINT_MAX(0.995)不同,那是髮根的上限
+export const SCALP_RMAX = 0.95;
+
+/**
+ * 頭皮殼:圓頂上殼(足印半徑 0..rMax)的實心曲面。
+ * 存在的理由是「塞滿」—— 髮束之間的縫隙用一片曲面填,而不是靠加更多髮束:
+ * 一張網格 vs 十幾根髮束,draw call 差一個量級(效能硬線見 #17)。
+ * 髮束因此變成長在頭皮上的細節,而不是懸空的一叢。
+ *
+ * inflate > 1 產出描邊殼用的放大版(沿圓頂半徑等比外推,不是沿法線 —— 橢球等比
+ * 放大後仍是同心橢球,邊緣不會自交)。spineT 全 0:頭皮不跟著 M2 動態擺動。
+ */
+export function buildScalpShell(
+  d: Dome, rMax = SCALP_RMAX, radial = 28, rings = 5, inflate = 1,
+): SpikeGeo {
+  const dd = inflate === 1
+    ? d
+    : { ...d, rx: d.rx * inflate, ry: d.ry * inflate, rz: d.rz * inflate };
+  const vertexCount = 1 + rings * radial; // 極點 + 每環 radial 個
+  const positions = new Float32Array(vertexCount * 3);
+  const normals = new Float32Array(vertexCount * 3);
+  const spineT = new Float32Array(vertexCount);
+
+  const put = (v: number, ex: number, ez: number): void => {
+    const p = domePoint(dd, ex, ez);
+    const n = domeNormal(dd, p);
+    positions[v * 3] = p.x;
+    positions[v * 3 + 1] = p.y;
+    positions[v * 3 + 2] = p.z;
+    normals[v * 3] = n.x;
+    normals[v * 3 + 1] = n.y;
+    normals[v * 3 + 2] = n.z;
+  };
+  put(0, 0, 0); // 頭頂極點
+  for (let i = 1; i <= rings; i++) {
+    const rad = (i / rings) * rMax;
+    for (let j = 0; j < radial; j++) {
+      const a = (j / radial) * Math.PI * 2;
+      put(1 + (i - 1) * radial + j, rad * Math.cos(a), rad * Math.sin(a));
+    }
+  }
+
+  const indices = new Uint16Array((radial + (rings - 1) * radial * 2) * 3);
+  let k = 0;
+  for (let j = 0; j < radial; j++) {
+    // 極點扇:winding 與 buildSpike 同慣例(CCW-朝外),交給 flipWinding 反轉
+    indices[k++] = 0;
+    indices[k++] = 1 + ((j + 1) % radial);
+    indices[k++] = 1 + j;
+  }
+  for (let i = 1; i < rings; i++) {
+    for (let j = 0; j < radial; j++) {
+      const a = 1 + (i - 1) * radial + j;
+      const b = 1 + (i - 1) * radial + ((j + 1) % radial);
+      indices[k++] = a;
+      indices[k++] = b;
+      indices[k++] = a + radial;
+      indices[k++] = b;
+      indices[k++] = b + radial;
+      indices[k++] = a + radial;
+    }
+  }
+  return { positions, normals, spineT, indices };
+}
+
 /**
  * 髮束的生長方向(單位向量):圓頂法線 n 繞局部 z 軸 roll 掉 tilt 之後的結果。
  * 這是 hair3d 那兩行 quaternion(setFromUnitVectors(UP,n) 再乘 roll)的等價閉式 ——
