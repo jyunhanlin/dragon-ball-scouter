@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ASPECT_MAX, ASPECT_MIN, SPIKES, buildSpike, domeNormal, domePoint, fitDome, flipWinding,
-  headProxy, measureAspect, type SpikeSpec,
+  headProxy, measureAspect, spikeGrowth, type SpikeSpec,
 } from './hairgeo';
 import type { Pt } from './types';
 
@@ -292,6 +292,34 @@ describe('SPIKES 配置表 × 圓頂', () => {
     expect(Math.max(...gaps)).toBeLessThan(0.27) // 0.26 = 原本 12 根自己的排距,後腦不得比頭本來就有的更稀;
   });
 
+});
+
+describe('帽簷(brim)', () => {
+  const dome = fitDome(0.31);
+  /** 帽簷 = 足印貼近赤道、且明顯偏一側的那圈 */
+  const BRIM = SPIKES.filter((s) => Math.hypot(s.ex, s.ez) >= 0.9 && Math.abs(s.ex) >= 0.7);
+
+  it('存在一圈貼近赤道的髮根 — 少了它髮束全從頭頂往上長,讀起來是戴皇冠不是頭髮', () => {
+    expect(BRIM.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('帽簷髮束往外倒 — 往內會跨過中線互相交叉,描邊疊成一塊深色', () => {
+    // tilt 的正負在圓頂上不同位置代表相反的方向(局部 x 軸的像跟著法線轉),
+    // 這條就是釘住那件事:生長方向的左右分量必須與髮根同側
+    for (const s of BRIM) {
+      const g = spikeGrowth(domeNormal(dome, domePoint(dome, s.ex, s.ez)), s.tilt);
+      expect(Math.sign(g.x)).toBe(Math.sign(s.ex));
+    }
+  });
+
+  it('帽簷髮束往下蓋,不是往上豎 — 往上豎就蓋不住髮際線那圈真髮', () => {
+    // y-down:正值 = 往下。帽簷那點的「局部 x 軸像」幾乎是朝上的,所以 tilt 給錯號
+    // 會讓髮束筆直往上長 —— 紙上看起來只是符號,畫面上是整圈帽簷消失
+    for (const s of BRIM) {
+      const g = spikeGrowth(domeNormal(dome, domePoint(dome, s.ex, s.ez)), s.tilt);
+      expect(g.y).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('頭部代理(Head Proxy)', () => {
